@@ -9,6 +9,7 @@ import 'package:flutter_colorpicker/flutter_colorpicker.dart';
 import 'package:file_picker/file_picker.dart';
 import 'dart:io';
 import 'dart:math' as math;
+import 'package:path/path.dart' as path; // Add to pubspec.yaml
 
 void main() {
   runApp(const MyApp());
@@ -47,7 +48,7 @@ class Player {
   Color color;
   double radius = 20.0;
   Uint8List? imageData;
-  Team team; // Added team property
+  Team team;
 
   Player({required this.name, required this.position, required this.color, this.imageData, required this.team}) : id = UniqueKey().toString();
 
@@ -183,7 +184,7 @@ class _TacticsBoardPageState extends State<TacticsBoardPage> with TickerProvider
   void initState() {
     super.initState();
     _animationController = AnimationController(vsync: this);
-    _saveState(); // Initial state
+    _saveState();
   }
 
   @override
@@ -365,14 +366,44 @@ class _TacticsBoardPageState extends State<TacticsBoardPage> with TickerProvider
         ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Recording started...'), duration: Duration(seconds: 2)));
       } else {
         _recordTimer?.cancel();
-        showDialog(context: context, builder: (context) => AlertDialog(
-          title: const Text('Recording Stopped'),
-          content: Text('Captured ${_recordedFrames.length} frames. Video export is coming soon!'),
-          actions: [TextButton(onPressed: () => Navigator.of(context).pop(), child: const Text('OK'))],
-        ),
-        );
+        _showExportDialog();
       }
     });
+  }
+
+  Future<void> _showExportDialog() async {
+    if (_recordedFrames.isEmpty || !mounted) return;
+
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Recording Stopped'),
+        content: Text('Captured ${_recordedFrames.length} frames. Would you like to export them as an image sequence?'),
+        actions: [
+          TextButton(onPressed: () => Navigator.of(context).pop(), child: const Text('Discard')),
+          ElevatedButton(onPressed: () {
+            Navigator.of(context).pop();
+            _exportFrames();
+          }, child: const Text('Export')),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _exportFrames() async {
+    String? outputDirectory = await FilePicker.platform.getDirectoryPath(
+      dialogTitle: 'Please select a directory to save frames:',
+    );
+
+    if (outputDirectory != null) {
+      for (int i = 0; i < _recordedFrames.length; i++) {
+        final frameNumber = (i + 1).toString().padLeft(4, '0');
+        final file = File(path.join(outputDirectory, 'frame_$frameNumber.png'));
+        await file.writeAsBytes(_recordedFrames[i]);
+      }
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Exported ${_recordedFrames.length} frames!')));
+    }
   }
 
   Future<void> _captureFrame() async {
@@ -633,7 +664,7 @@ class BoardPainter extends CustomPainter {
     canvas.drawLine(start, end, paint);
     final path = Path();
     final delta = end - start;
-    if (delta.distance < 5) return; // Avoid drawing arrowhead on tiny lines
+    if (delta.distance < 5) return;
     final angle = delta.direction;
     const arrowSize = 15.0;
     const arrowAngle = math.pi / 6;
