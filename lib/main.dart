@@ -21,7 +21,7 @@ class MyApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'Football Tactics Animator',
+      title: 'Tactics Animator',
       theme: ThemeData(
         brightness: Brightness.dark,
         primarySwatch: Colors.green,
@@ -33,6 +33,7 @@ class MyApp extends StatelessWidget {
             foregroundColor: Colors.white,
           ),
         ),
+        dividerColor: Colors.grey.shade800,
       ),
       home: const TacticsBoardPage(),
       debugShowCheckedModeBanner: false,
@@ -46,8 +47,9 @@ class Player {
   String name;
   Offset position;
   Color color;
-  Color? color2; // Added secondary color
-  double radius; // Changed from constant to variable
+  Color? color2;
+  Color textColor;
+  double radius;
   Uint8List? imageData;
   Team team;
 
@@ -56,6 +58,7 @@ class Player {
     required this.position,
     required this.color,
     this.color2,
+    this.textColor = Colors.white,
     this.radius = 20.0,
     this.imageData,
     required this.team,
@@ -67,6 +70,7 @@ class Player {
         position = other.position,
         color = other.color,
         color2 = other.color2,
+        textColor = other.textColor,
         radius = other.radius,
         imageData = other.imageData,
         team = other.team;
@@ -76,27 +80,35 @@ class Player {
     'name': name,
     'dx': position.dx,
     'dy': position.dy,
-    'color': color.value,
-    'color2': color2?.value,
+    'color': {'a': color.alpha, 'r': color.red, 'g': color.green, 'b': color.blue},
+    'color2': color2 != null ? {'a': color2!.alpha, 'r': color2!.red, 'g': color2!.green, 'b': color2!.blue} : null,
+    'textColor': {'a': textColor.alpha, 'r': textColor.red, 'g': textColor.green, 'b': textColor.blue},
     'radius': radius,
     'imageData': imageData != null ? base64Encode(imageData!) : null,
     'team': team.index,
   };
 
-  factory Player.fromJson(Map<String, dynamic> json) => Player(
-    name: json['name'],
-    position: Offset(json['dx'], json['dy']),
-    color: Color(json['color']),
-    color2: json['color2'] != null ? Color(json['color2']) : null,
-    radius: json['radius'],
-    imageData: json['imageData'] != null ? base64Decode(json['imageData']) : null,
-    team: Team.values[json['team']],
-  )..id = json['id'];
+  factory Player.fromJson(Map<String, dynamic> json) {
+    var colorMap = json['color'] as Map<String, dynamic>;
+    var color2Map = json['color2'] as Map<String, dynamic>?;
+    var textColorMap = json['textColor'] as Map<String, dynamic>?;
+
+    return Player(
+      name: json['name'],
+      position: Offset(json['dx'], json['dy']),
+      color: Color.fromARGB(colorMap['a'], colorMap['r'], colorMap['g'], colorMap['b']),
+      color2: color2Map != null ? Color.fromARGB(color2Map['a'], color2Map['r'], color2Map['g'], color2Map['b']) : null,
+      textColor: textColorMap != null ? Color.fromARGB(textColorMap['a'], textColorMap['r'], textColorMap['g'], textColorMap['b']) : Colors.white,
+      radius: json['radius'],
+      imageData: json['imageData'] != null ? base64Decode(json['imageData']) : null,
+      team: Team.values[json['team']],
+    )..id = json['id'];
+  }
 }
 
 class Ball {
   Offset position;
-  Color color = Colors.yellow;
+  Color color = Colors.white;
   double radius = 12.0;
 
   Ball({required this.position});
@@ -106,8 +118,19 @@ class Ball {
         color = other.color,
         radius = other.radius;
 
-  Map<String, dynamic> toJson() => {'dx': position.dx, 'dy': position.dy, 'color': color.value, 'radius': radius};
-  factory Ball.fromJson(Map<String, dynamic> json) => Ball(position: Offset(json['dx'], json['dy']))..color = Color(json['color'])..radius = json['radius'];
+  Map<String, dynamic> toJson() => {
+    'dx': position.dx,
+    'dy': position.dy,
+    'color': {'a': color.alpha, 'r': color.red, 'g': color.green, 'b': color.blue},
+    'radius': radius,
+  };
+
+  factory Ball.fromJson(Map<String, dynamic> json) {
+    var colorMap = json['color'] as Map<String, dynamic>;
+    return Ball(position: Offset(json['dx'], json['dy']))
+      ..color = Color.fromARGB(colorMap['a'], colorMap['r'], colorMap['g'], colorMap['b'])
+      ..radius = json['radius'];
+  }
 }
 
 class Arrow {
@@ -133,20 +156,23 @@ class BoardState {
   Ball? ball;
   List<Arrow> arrows;
   List<Highlight> highlights;
+  BoardLayout boardLayout;
 
-  BoardState({required this.players, this.ball, required this.arrows, required this.highlights});
+  BoardState({required this.players, this.ball, required this.arrows, required this.highlights, this.boardLayout = BoardLayout.full});
 
   BoardState.clone(BoardState other)
       : players = other.players.map((p) => Player.clone(p)).toList(),
         ball = other.ball != null ? Ball.clone(other.ball!) : null,
         arrows = List.from(other.arrows),
-        highlights = List.from(other.highlights);
+        highlights = List.from(other.highlights),
+        boardLayout = other.boardLayout;
 
   Map<String, dynamic> toJson() => {
     'players': players.map((p) => p.toJson()).toList(),
     'ball': ball?.toJson(),
     'arrows': arrows.map((a) => a.toJson()).toList(),
     'highlights': highlights.map((h) => h.toJson()).toList(),
+    'boardLayout': boardLayout.index,
   };
 
   factory BoardState.fromJson(Map<String, dynamic> json) => BoardState(
@@ -154,6 +180,7 @@ class BoardState {
     ball: json['ball'] != null ? Ball.fromJson(json['ball']) : null,
     arrows: (json['arrows'] as List).map((a) => Arrow.fromJson(a)).toList(),
     highlights: (json['highlights'] as List).map((h) => Highlight.fromJson(h)).toList(),
+    boardLayout: json['boardLayout'] != null ? BoardLayout.values[json['boardLayout']] : BoardLayout.full,
   );
 }
 
@@ -165,6 +192,7 @@ class AnimationKeyframe {
 
 enum Tool { none, arrow, highlightRect, highlightOval }
 enum Team { home, away }
+enum BoardLayout { full, half }
 
 // MARK: - Main Page
 class _TacticsBoardPageState extends State<TacticsBoardPage> with TickerProviderStateMixin {
@@ -179,6 +207,7 @@ class _TacticsBoardPageState extends State<TacticsBoardPage> with TickerProvider
   Tool activeTool = Tool.none;
   Offset? dragStart;
   Offset? currentDrag;
+  BoardLayout boardLayout = BoardLayout.full;
 
   int homePlayerCount = 0;
   int awayPlayerCount = 0;
@@ -213,6 +242,7 @@ class _TacticsBoardPageState extends State<TacticsBoardPage> with TickerProvider
       ball: ball != null ? Ball.clone(ball!) : null,
       arrows: List.from(arrows),
       highlights: List.from(highlights),
+      boardLayout: boardLayout,
     ));
     _redoStack.clear();
   }
@@ -227,6 +257,7 @@ class _TacticsBoardPageState extends State<TacticsBoardPage> with TickerProvider
         ball = prevState.ball != null ? Ball.clone(prevState.ball!) : null;
         arrows = List.from(prevState.arrows);
         highlights = List.from(prevState.highlights);
+        boardLayout = prevState.boardLayout;
         selectedPlayer = null;
       });
     }
@@ -241,13 +272,14 @@ class _TacticsBoardPageState extends State<TacticsBoardPage> with TickerProvider
         ball = nextState.ball != null ? Ball.clone(nextState.ball!) : null;
         arrows = List.from(nextState.arrows);
         highlights = List.from(nextState.highlights);
+        boardLayout = nextState.boardLayout;
         selectedPlayer = null;
       });
     }
   }
 
   void _saveToFile() async {
-    final state = BoardState(players: players, ball: ball, arrows: arrows, highlights: highlights);
+    final state = BoardState(players: players, ball: ball, arrows: arrows, highlights: highlights, boardLayout: boardLayout);
     final jsonString = jsonEncode(state.toJson());
 
     String? outputFile = await FilePicker.platform.saveFile(
@@ -279,6 +311,7 @@ class _TacticsBoardPageState extends State<TacticsBoardPage> with TickerProvider
         ball = state.ball;
         arrows = state.arrows;
         highlights = state.highlights;
+        boardLayout = state.boardLayout;
         _history.clear();
         _redoStack.clear();
         _saveState();
@@ -323,7 +356,7 @@ class _TacticsBoardPageState extends State<TacticsBoardPage> with TickerProvider
 
   void _playAnimation() {
     if (keyframes.length < 2 || isAnimating) return;
-    final originalState = BoardState.clone(BoardState(players: players, ball: ball, arrows: arrows, highlights: highlights));
+    final originalState = BoardState.clone(BoardState(players: players, ball: ball, arrows: arrows, highlights: highlights, boardLayout: boardLayout));
     int currentKeyframeIndex = 0;
     _animationController.duration = const Duration(seconds: 2);
     _animationController.reset();
@@ -462,6 +495,24 @@ class _TacticsBoardPageState extends State<TacticsBoardPage> with TickerProvider
     _saveState();
   }
 
+  void _updateTeamPlayerSize(Team team, double size) {
+    setState(() {
+      for (var player in players) {
+        if (player.team == team) {
+          player.radius = size;
+        }
+      }
+    });
+    _saveState();
+  }
+
+  void _toggleLayout() {
+    setState(() {
+      boardLayout = boardLayout == BoardLayout.full ? BoardLayout.half : BoardLayout.full;
+    });
+    _saveState();
+  }
+
   void _onPlayerTap(Player player) => setState(() => selectedPlayer = player);
   void _onPlayerDragUpdate(Player player, DragUpdateDetails details) => setState(() => player.position += details.delta);
   void _onPlayerDragEnd() => _saveState();
@@ -472,6 +523,10 @@ class _TacticsBoardPageState extends State<TacticsBoardPage> with TickerProvider
       setState(() {
         dragStart = details.localPosition;
         currentDrag = details.localPosition;
+      });
+    } else {
+      setState(() {
+        selectedPlayer = null;
       });
     }
   }
@@ -503,7 +558,7 @@ class _TacticsBoardPageState extends State<TacticsBoardPage> with TickerProvider
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('Football Tactics Animator'), elevation: 0),
+      appBar: AppBar(title: const Text('Tactics Animator'), elevation: 0),
       body: Row(
         children: [
           Expanded(
@@ -522,6 +577,7 @@ class _TacticsBoardPageState extends State<TacticsBoardPage> with TickerProvider
                           players: players, ball: ball, arrows: arrows, highlights: highlights,
                           dragStart: dragStart, currentDrag: currentDrag, activeTool: activeTool,
                           selectedPlayer: selectedPlayer,
+                          layout: boardLayout,
                           onPlayerTap: _onPlayerTap, onPlayerDragUpdate: _onPlayerDragUpdate, onBallDragUpdate: _onBallDragUpdate,
                           onPlayerDragEnd: _onPlayerDragEnd, onBallDragEnd: _onPlayerDragEnd,
                         ),
@@ -539,6 +595,7 @@ class _TacticsBoardPageState extends State<TacticsBoardPage> with TickerProvider
                   onRedo: _redo, canRedo: _redoStack.isNotEmpty,
                   onClearDrawings: _clearDrawings,
                   onSave: _saveToFile, onLoad: _loadFromFile,
+                  onToggleLayout: _toggleLayout,
                 ),
               ],
             ),
@@ -551,6 +608,7 @@ class _TacticsBoardPageState extends State<TacticsBoardPage> with TickerProvider
               selectedPlayer = null;
             }); _saveState(); },
             onTeamColorUpdate: _updateTeamColor,
+            onTeamSizeUpdate: _updateTeamPlayerSize,
           ),
         ],
       ),
@@ -575,6 +633,7 @@ class TacticsBoard extends StatelessWidget {
   final Offset? currentDrag;
   final Tool activeTool;
   final Player? selectedPlayer;
+  final BoardLayout layout;
   final Function(Player) onPlayerTap;
   final Function(Player, DragUpdateDetails) onPlayerDragUpdate;
   final VoidCallback onPlayerDragEnd;
@@ -585,6 +644,7 @@ class TacticsBoard extends StatelessWidget {
     super.key,
     required this.players, this.ball, required this.arrows, required this.highlights,
     this.dragStart, this.currentDrag, required this.activeTool, this.selectedPlayer,
+    required this.layout,
     required this.onPlayerTap, required this.onPlayerDragUpdate, required this.onPlayerDragEnd,
     required this.onBallDragUpdate, required this.onBallDragEnd,
   });
@@ -596,7 +656,10 @@ class TacticsBoard extends StatelessWidget {
       child: Stack(
         fit: StackFit.expand,
         children: [
-          Image.asset('assets/football_field.jpg', fit: BoxFit.fitHeight),
+          Image.asset(
+            layout == BoardLayout.full ? 'assets/football_field.jpg' : 'assets/football_half_field.jpg',
+            fit: BoxFit.fitHeight,
+          ),
           CustomPaint(
             painter: BoardPainter(
               arrows: arrows, highlights: highlights, dragStart: dragStart,
@@ -708,25 +771,25 @@ class PlayerWidget extends StatelessWidget {
       height: player.radius * 2,
       decoration: BoxDecoration(
         shape: BoxShape.circle,
-        border: isSelected ? Border.all(color: Colors.yellow, width: 3) : null,
+        border: Border.all(
+          color: isSelected ? Colors.yellow : Colors.black,
+          width: isSelected ? 3 : 1.5,
+        ),
       ),
       child: ClipOval(
         child: Stack(
+          alignment: Alignment.center,
           children: [
-            // Base color
             Container(color: player.color),
-            // Secondary color (half)
             if (player.color2 != null)
               ClipPath(
                 clipper: HalfCircleClipper(),
                 child: Container(color: player.color2),
               ),
-            // Player Image
             if (player.imageData != null)
               Image.memory(player.imageData!, fit: BoxFit.cover, width: player.radius * 2, height: player.radius * 2),
-            // Player Name (only if no image)
             if (player.imageData == null)
-              Center(child: Text(player.name, style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: player.radius * 0.8))),
+              Text(player.name, style: TextStyle(color: player.textColor, fontWeight: FontWeight.bold, fontSize: player.radius * 0.8)),
           ],
         ),
       ),
@@ -763,7 +826,7 @@ class BallWidget extends StatelessWidget {
 class ControlPanel extends StatelessWidget {
   final Function(Team) onAddPlayer;
   final VoidCallback onAddBall, onAddKeyframe, onPlayAnimation, onResetAll, onToggleRecording;
-  final VoidCallback onUndo, onRedo, onClearDrawings, onSave, onLoad;
+  final VoidCallback onUndo, onRedo, onClearDrawings, onSave, onLoad, onToggleLayout;
   final Function(Tool) onToolSelected;
   final Tool activeTool;
   final bool isAnimating, isRecording, canUndo, canRedo;
@@ -774,37 +837,52 @@ class ControlPanel extends StatelessWidget {
     required this.onPlayAnimation, required this.onResetAll, required this.onToolSelected,
     required this.activeTool, required this.isAnimating, required this.onToggleRecording, required this.isRecording,
     required this.onUndo, required this.canUndo, required this.onRedo, required this.canRedo,
-    required this.onClearDrawings, required this.onSave, required this.onLoad,
+    required this.onClearDrawings, required this.onSave, required this.onLoad, required this.onToggleLayout,
   });
 
   @override
   Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.all(8.0),
-      child: Wrap(
-        spacing: 8.0, runSpacing: 8.0, alignment: WrapAlignment.center,
+    return Container(
+      padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 16),
+      color: Theme.of(context).cardColor,
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceEvenly,
         children: [
-          ElevatedButton(onPressed: onSave, child: const Text('Save')),
-          ElevatedButton(onPressed: onLoad, child: const Text('Load')),
+          _buildIconButton(context, tip: 'Save Project', icon: Icons.save, onPressed: onSave),
+          _buildIconButton(context, tip: 'Load Project', icon: Icons.folder_open, onPressed: onLoad),
           const VerticalDivider(),
-          ElevatedButton(onPressed: canUndo ? onUndo : null, child: const Text('Undo')),
-          ElevatedButton(onPressed: canRedo ? onRedo : null, child: const Text('Redo')),
+          _buildIconButton(context, tip: 'Undo', icon: Icons.undo, onPressed: canUndo ? onUndo : null),
+          _buildIconButton(context, tip: 'Redo', icon: Icons.redo, onPressed: canRedo ? onRedo : null),
           const VerticalDivider(),
-          ElevatedButton(onPressed: () => onAddPlayer(Team.home), child: const Text('Add Home')),
-          ElevatedButton(onPressed: () => onAddPlayer(Team.away), child: const Text('Add Away')),
-          ElevatedButton(onPressed: onAddBall, child: const Text('Add Ball')),
+          _buildIconButton(context, tip: 'Add Home Player', icon: Icons.person_add, color: Colors.red, onPressed: () => onAddPlayer(Team.home)),
+          _buildIconButton(context, tip: 'Add Away Player', icon: Icons.person_add, color: Colors.blue, onPressed: () => onAddPlayer(Team.away)),
+          _buildIconButton(context, tip: 'Add Ball', icon: Icons.sports_soccer, color: Colors.yellow, onPressed: onAddBall),
           const VerticalDivider(),
-          ElevatedButton(onPressed: onAddKeyframe, child: const Text('Add Keyframe')),
-          ElevatedButton(onPressed: isAnimating ? null : onPlayAnimation, child: const Text('Play')),
+          _buildIconButton(context, tip: 'Add Keyframe', icon: Icons.add_to_photos, onPressed: onAddKeyframe),
+          _buildIconButton(context, tip: 'Play Animation', icon: Icons.play_arrow, onPressed: isAnimating ? null : onPlayAnimation),
           const VerticalDivider(),
-          ElevatedButton(onPressed: () => onToolSelected(Tool.arrow), style: ElevatedButton.styleFrom(backgroundColor: activeTool == Tool.arrow ? Colors.amber : null), child: const Text('Draw Arrow')),
-          ElevatedButton(onPressed: () => onToolSelected(Tool.highlightRect), style: ElevatedButton.styleFrom(backgroundColor: activeTool == Tool.highlightRect ? Colors.amber : null), child: const Text('Highlight Rect')),
-          ElevatedButton(onPressed: () => onToolSelected(Tool.highlightOval), style: ElevatedButton.styleFrom(backgroundColor: activeTool == Tool.highlightOval ? Colors.amber : null), child: const Text('Highlight Oval')),
+          _buildIconButton(context, tip: 'Draw Arrow', icon: Icons.arrow_forward, onPressed: () => onToolSelected(Tool.arrow), isActive: activeTool == Tool.arrow),
+          _buildIconButton(context, tip: 'Highlight Rectangle', icon: Icons.crop_square, onPressed: () => onToolSelected(Tool.highlightRect), isActive: activeTool == Tool.highlightRect),
+          _buildIconButton(context, tip: 'Highlight Oval', icon: Icons.circle_outlined, onPressed: () => onToolSelected(Tool.highlightOval), isActive: activeTool == Tool.highlightOval),
           const VerticalDivider(),
-          ElevatedButton(onPressed: onToggleRecording, style: ElevatedButton.styleFrom(backgroundColor: isRecording ? Colors.red : Colors.cyan), child: Text(isRecording ? 'Stop' : 'Record')),
-          ElevatedButton(onPressed: onClearDrawings, child: const Text('Clear Drawings')),
-          ElevatedButton(onPressed: onResetAll, style: ElevatedButton.styleFrom(backgroundColor: Colors.grey.shade700), child: const Text('Reset All')),
+          _buildIconButton(context, tip: 'Switch Layout', icon: Icons.crop_landscape, onPressed: onToggleLayout),
+          _buildIconButton(context, tip: isRecording ? 'Stop Recording' : 'Record Animation', icon: isRecording ? Icons.stop : Icons.videocam, color: isRecording ? Colors.red : Colors.cyan, onPressed: onToggleRecording),
+          _buildIconButton(context, tip: 'Clear Drawings', icon: Icons.layers_clear, onPressed: onClearDrawings),
+          _buildIconButton(context, tip: 'Reset Board', icon: Icons.refresh, onPressed: onResetAll),
         ],
+      ),
+    );
+  }
+
+  Widget _buildIconButton(BuildContext context, {required String tip, required IconData icon, required VoidCallback? onPressed, Color? color, bool isActive = false}) {
+    return Tooltip(
+      message: tip,
+      child: IconButton(
+        icon: Icon(icon),
+        color: isActive ? Colors.amber : color ?? Colors.white,
+        onPressed: onPressed,
+        iconSize: 28,
+        splashRadius: 24,
       ),
     );
   }
@@ -816,8 +894,9 @@ class EditPanel extends StatefulWidget {
   final VoidCallback onPlayerUpdate;
   final VoidCallback onPlayerRemove;
   final Function(Team, Color, bool) onTeamColorUpdate;
+  final Function(Team, double) onTeamSizeUpdate;
 
-  const EditPanel({super.key, this.selectedPlayer, required this.onPlayerUpdate, required this.onPlayerRemove, required this.onTeamColorUpdate});
+  const EditPanel({super.key, this.selectedPlayer, required this.onPlayerUpdate, required this.onPlayerRemove, required this.onTeamColorUpdate, required this.onTeamSizeUpdate});
   @override
   State<EditPanel> createState() => _EditPanelState();
 }
@@ -825,6 +904,9 @@ class EditPanel extends StatefulWidget {
 class _EditPanelState extends State<EditPanel> {
   late TextEditingController _nameController;
   final ImagePicker _picker = ImagePicker();
+
+  double _homePlayerSize = 20.0;
+  double _awayPlayerSize = 20.0;
 
   @override
   void initState() {
@@ -856,9 +938,13 @@ class _EditPanelState extends State<EditPanel> {
     }
   }
 
-  void _pickColor(BuildContext context, {Player? player, Team? team, bool isPrimary = true}) {
-    Color initialColor = player?.color ?? (team == Team.home ? Colors.red : Colors.blue);
-    if (!isPrimary) {
+  void _pickColor(BuildContext context, {Player? player, Team? team, bool isPrimary = true, bool isTextColor = false}) {
+    Color initialColor = Colors.white;
+    if (isTextColor) {
+      initialColor = player?.textColor ?? Colors.white;
+    } else if (isPrimary) {
+      initialColor = player?.color ?? (team == Team.home ? Colors.red : Colors.blue);
+    } else {
       initialColor = player?.color2 ?? (team == Team.home ? Colors.white : Colors.white);
     }
 
@@ -872,7 +958,9 @@ class _EditPanelState extends State<EditPanel> {
             onColorChanged: (color) {
               setState(() {
                 if (player != null) {
-                  if (isPrimary) {
+                  if (isTextColor) {
+                    player.textColor = color;
+                  } else if (isPrimary) {
                     player.color = color;
                   } else {
                     player.color2 = color;
@@ -883,6 +971,11 @@ class _EditPanelState extends State<EditPanel> {
                 }
               });
             },
+            displayThumbColor: true,
+            enableAlpha: false,
+            pickerAreaHeightPercent: 0.8,
+            colorPickerWidth: 300,
+            hexInputBar: true,
           ),
         ),
         actions: <Widget>[
@@ -902,129 +995,80 @@ class _EditPanelState extends State<EditPanel> {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           if (widget.selectedPlayer != null) ...[
-            Text('Edit Player', style: Theme.of(context).textTheme.headlineSmall),
+            Text('Edit Player', style: Theme.of(context).textTheme.titleLarge),
             const SizedBox(height: 16),
-            TextField(
-              controller: _nameController,
-              decoration: const InputDecoration(labelText: 'Name/Number'),
-              onChanged: (value) {
-                widget.selectedPlayer!.name = value;
-                widget.onPlayerUpdate();
-              },
+            TextField(controller: _nameController, decoration: const InputDecoration(labelText: 'Name/Number'),
+              onChanged: (value) { widget.selectedPlayer!.name = value; widget.onPlayerUpdate(); },
             ),
             const SizedBox(height: 16),
             Text('Player Size: ${widget.selectedPlayer!.radius.toStringAsFixed(0)}'),
             Slider(
-              value: widget.selectedPlayer!.radius,
-              min: 10,
-              max: 40,
-              onChanged: (value) {
-                setState(() => widget.selectedPlayer!.radius = value);
-                widget.onPlayerUpdate();
-              },
+              value: widget.selectedPlayer!.radius, min: 10, max: 60,
+              onChanged: (value) { setState(() => widget.selectedPlayer!.radius = value); widget.onPlayerUpdate(); },
             ),
             const SizedBox(height: 16),
-            Row(
-              children: [
-                const Text('Primary Color'),
-                const Spacer(),
-                GestureDetector(
-                  onTap: () => _pickColor(context, player: widget.selectedPlayer!),
-                  child: Container(
-                    width: 40, height: 40,
-                    decoration: BoxDecoration(color: widget.selectedPlayer!.color, shape: BoxShape.circle, border: Border.all(color: Colors.white54)),
-                  ),
-                )
-              ],
-            ),
+            _buildColorPickerRow('Primary Color', () => _pickColor(context, player: widget.selectedPlayer!), widget.selectedPlayer!.color),
             const SizedBox(height: 16),
-            Row(
-              children: [
-                const Text('Secondary Color'),
-                const Spacer(),
-                GestureDetector(
-                  onTap: () => _pickColor(context, player: widget.selectedPlayer!, isPrimary: false),
-                  child: Container(
-                    width: 40, height: 40,
-                    decoration: BoxDecoration(color: widget.selectedPlayer!.color2 ?? Colors.transparent, shape: BoxShape.circle, border: Border.all(color: Colors.white54)),
-                  ),
-                )
-              ],
-            ),
+            _buildColorPickerRow('Secondary Color', () => _pickColor(context, player: widget.selectedPlayer!, isPrimary: false), widget.selectedPlayer!.color2),
+            const SizedBox(height: 16),
+            _buildColorPickerRow('Text Color', () => _pickColor(context, player: widget.selectedPlayer!, isTextColor: true), widget.selectedPlayer!.textColor),
             const SizedBox(height: 24),
-            ElevatedButton(onPressed: _pickImage, child: const Text('Choose Picture')),
+            ElevatedButton.icon(icon: const Icon(Icons.image), onPressed: _pickImage, label: const Text('Choose Picture')),
             if (widget.selectedPlayer!.imageData != null)
-              Padding(
-                padding: const EdgeInsets.only(top: 16.0),
-                child: Image.memory(widget.selectedPlayer!.imageData!, height: 100),
-              ),
+              Padding(padding: const EdgeInsets.only(top: 16.0), child: Image.memory(widget.selectedPlayer!.imageData!, height: 100)),
             const Spacer(),
-            ElevatedButton(
+            ElevatedButton.icon(
+              icon: const Icon(Icons.delete_forever),
               onPressed: widget.onPlayerRemove,
               style: ElevatedButton.styleFrom(backgroundColor: Colors.red.shade900),
-              child: const Text('Remove Player'),
+              label: const Text('Remove Player'),
             ),
           ] else ...[
-            Text('Team Settings', style: Theme.of(context).textTheme.headlineSmall),
+            Text('Team Settings', style: Theme.of(context).textTheme.titleLarge),
             const SizedBox(height: 24),
-            Row(
-              children: [
-                const Text('Home Primary'),
-                const Spacer(),
-                GestureDetector(
-                  onTap: () => _pickColor(context, team: Team.home),
-                  child: Container(
-                    width: 40, height: 40,
-                    decoration: BoxDecoration(color: Colors.red.shade700, shape: BoxShape.circle, border: Border.all(color: Colors.white54)),
-                  ),
-                )
-              ],
+            Text('Home Player Size: ${_homePlayerSize.toStringAsFixed(0)}'),
+            Slider(
+              value: _homePlayerSize, min: 10, max: 60,
+              onChanged: (value) {
+                setState(() => _homePlayerSize = value);
+                widget.onTeamSizeUpdate(Team.home, value);
+              },
             ),
+            _buildColorPickerRow('Home Primary', () => _pickColor(context, team: Team.home), Colors.red.shade700),
             const SizedBox(height: 16),
-            Row(
-              children: [
-                const Text('Home Secondary'),
-                const Spacer(),
-                GestureDetector(
-                  onTap: () => _pickColor(context, team: Team.home, isPrimary: false),
-                  child: Container(
-                    width: 40, height: 40,
-                    decoration: BoxDecoration(color: Colors.white, shape: BoxShape.circle, border: Border.all(color: Colors.white54)),
-                  ),
-                )
-              ],
-            ),
+            _buildColorPickerRow('Home Secondary', () => _pickColor(context, team: Team.home, isPrimary: false), Colors.white),
             const Divider(height: 32),
-            Row(
-              children: [
-                const Text('Away Primary'),
-                const Spacer(),
-                GestureDetector(
-                  onTap: () => _pickColor(context, team: Team.away),
-                  child: Container(
-                    width: 40, height: 40,
-                    decoration: BoxDecoration(color: Colors.blue.shade700, shape: BoxShape.circle, border: Border.all(color: Colors.white54)),
-                  ),
-                )
-              ],
+            Text('Away Player Size: ${_awayPlayerSize.toStringAsFixed(0)}'),
+            Slider(
+              value: _awayPlayerSize, min: 10, max: 60,
+              onChanged: (value) {
+                setState(() => _awayPlayerSize = value);
+                widget.onTeamSizeUpdate(Team.away, value);
+              },
             ),
+            _buildColorPickerRow('Away Primary', () => _pickColor(context, team: Team.away), Colors.blue.shade700),
             const SizedBox(height: 16),
-            Row(
-              children: [
-                const Text('Away Secondary'),
-                const Spacer(),
-                GestureDetector(
-                  onTap: () => _pickColor(context, team: Team.away, isPrimary: false),
-                  child: Container(
-                    width: 40, height: 40,
-                    decoration: BoxDecoration(color: Colors.white, shape: BoxShape.circle, border: Border.all(color: Colors.white54)),
-                  ),
-                )
-              ],
-            ),
+            _buildColorPickerRow('Away Secondary', () => _pickColor(context, team: Team.away, isPrimary: false), Colors.white),
           ]
         ],
       ),
+    );
+  }
+
+  Widget _buildColorPickerRow(String label, VoidCallback onTap, Color? color) {
+    return Row(
+      children: [
+        Text(label),
+        const Spacer(),
+        GestureDetector(
+          onTap: onTap,
+          child: Container(
+            width: 40, height: 40,
+            decoration: BoxDecoration(color: color ?? Colors.transparent, shape: BoxShape.circle, border: Border.all(color: Colors.white54)),
+            child: color == null ? const Icon(Icons.add, size: 20) : null,
+          ),
+        )
+      ],
     );
   }
 }

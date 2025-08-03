@@ -38,6 +38,7 @@ dependencies:
   flutter_colorpicker: ^1.1.0
   file_picker: ^10.2.1
   path: ^1.9.1
+  flutter_svg: ^2.0.10
 
 dev_dependencies:
   flutter_test:
@@ -65,6 +66,8 @@ flutter:
   # To add assets to your application, add an assets section, like this:
   assets:
     - assets/football_field.jpg
+    - assets/football_field.svg
+    - assets/football_half_field.jpg
 
   # An image asset can refer to one or more resolution-specific "variants", see
   # https://flutter.dev/to/resolution-aware-images
