@@ -9,7 +9,7 @@ import 'package:flutter_colorpicker/flutter_colorpicker.dart';
 import 'package:file_picker/file_picker.dart';
 import 'dart:io';
 import 'dart:math' as math;
-import 'package:path/path.dart' as path; // Add to pubspec.yaml
+import 'package:path/path.dart' as path;
 
 void main() {
   runApp(const MyApp());
@@ -46,17 +46,27 @@ class Player {
   String name;
   Offset position;
   Color color;
-  double radius = 20.0;
+  Color? color2; // Added secondary color
+  double radius; // Changed from constant to variable
   Uint8List? imageData;
   Team team;
 
-  Player({required this.name, required this.position, required this.color, this.imageData, required this.team}) : id = UniqueKey().toString();
+  Player({
+    required this.name,
+    required this.position,
+    required this.color,
+    this.color2,
+    this.radius = 20.0,
+    this.imageData,
+    required this.team,
+  }) : id = UniqueKey().toString();
 
   Player.clone(Player other)
       : id = other.id,
         name = other.name,
         position = other.position,
         color = other.color,
+        color2 = other.color2,
         radius = other.radius,
         imageData = other.imageData,
         team = other.team;
@@ -67,6 +77,7 @@ class Player {
     'dx': position.dx,
     'dy': position.dy,
     'color': color.value,
+    'color2': color2?.value,
     'radius': radius,
     'imageData': imageData != null ? base64Encode(imageData!) : null,
     'team': team.index,
@@ -76,14 +87,16 @@ class Player {
     name: json['name'],
     position: Offset(json['dx'], json['dy']),
     color: Color(json['color']),
+    color2: json['color2'] != null ? Color(json['color2']) : null,
+    radius: json['radius'],
     imageData: json['imageData'] != null ? base64Decode(json['imageData']) : null,
     team: Team.values[json['team']],
-  )..id = json['id']..radius = json['radius'];
+  )..id = json['id'];
 }
 
 class Ball {
   Offset position;
-  Color color = Colors.white;
+  Color color = Colors.yellow;
   double radius = 12.0;
 
   Ball({required this.position});
@@ -434,11 +447,15 @@ class _TacticsBoardPageState extends State<TacticsBoardPage> with TickerProvider
     _saveState();
   }
 
-  void _updateTeamColor(Team team, Color color) {
+  void _updateTeamColor(Team team, Color color, bool isPrimary) {
     setState(() {
       for (var player in players) {
         if (player.team == team) {
-          player.color = color;
+          if (isPrimary) {
+            player.color = color;
+          } else {
+            player.color2 = color;
+          }
         }
       }
     });
@@ -690,18 +707,42 @@ class PlayerWidget extends StatelessWidget {
       width: player.radius * 2,
       height: player.radius * 2,
       decoration: BoxDecoration(
-        color: player.color,
         shape: BoxShape.circle,
         border: isSelected ? Border.all(color: Colors.yellow, width: 3) : null,
-        image: player.imageData != null
-            ? DecorationImage(image: MemoryImage(player.imageData!), fit: BoxFit.cover)
-            : null,
       ),
-      child: player.imageData == null
-          ? Center(child: Text(player.name, style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: player.radius * 0.8)))
-          : null,
+      child: ClipOval(
+        child: Stack(
+          children: [
+            // Base color
+            Container(color: player.color),
+            // Secondary color (half)
+            if (player.color2 != null)
+              ClipPath(
+                clipper: HalfCircleClipper(),
+                child: Container(color: player.color2),
+              ),
+            // Player Image
+            if (player.imageData != null)
+              Image.memory(player.imageData!, fit: BoxFit.cover, width: player.radius * 2, height: player.radius * 2),
+            // Player Name (only if no image)
+            if (player.imageData == null)
+              Center(child: Text(player.name, style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: player.radius * 0.8))),
+          ],
+        ),
+      ),
     );
   }
+}
+
+class HalfCircleClipper extends CustomClipper<Path> {
+  @override
+  Path getClip(Size size) {
+    final path = Path();
+    path.addRect(Rect.fromLTWH(0, 0, size.width / 2, size.height));
+    return path;
+  }
+  @override
+  bool shouldReclip(CustomClipper<Path> oldClipper) => false;
 }
 
 class BallWidget extends StatelessWidget {
@@ -774,7 +815,7 @@ class EditPanel extends StatefulWidget {
   final Player? selectedPlayer;
   final VoidCallback onPlayerUpdate;
   final VoidCallback onPlayerRemove;
-  final Function(Team, Color) onTeamColorUpdate;
+  final Function(Team, Color, bool) onTeamColorUpdate;
 
   const EditPanel({super.key, this.selectedPlayer, required this.onPlayerUpdate, required this.onPlayerRemove, required this.onTeamColorUpdate});
   @override
@@ -815,8 +856,12 @@ class _EditPanelState extends State<EditPanel> {
     }
   }
 
-  void _pickColor(BuildContext context, {Player? player, Team? team}) {
+  void _pickColor(BuildContext context, {Player? player, Team? team, bool isPrimary = true}) {
     Color initialColor = player?.color ?? (team == Team.home ? Colors.red : Colors.blue);
+    if (!isPrimary) {
+      initialColor = player?.color2 ?? (team == Team.home ? Colors.white : Colors.white);
+    }
+
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
@@ -827,10 +872,14 @@ class _EditPanelState extends State<EditPanel> {
             onColorChanged: (color) {
               setState(() {
                 if (player != null) {
-                  player.color = color;
+                  if (isPrimary) {
+                    player.color = color;
+                  } else {
+                    player.color2 = color;
+                  }
                   widget.onPlayerUpdate();
                 } else if (team != null) {
-                  widget.onTeamColorUpdate(team, color);
+                  widget.onTeamColorUpdate(team, color, isPrimary);
                 }
               });
             },
@@ -854,7 +903,7 @@ class _EditPanelState extends State<EditPanel> {
         children: [
           if (widget.selectedPlayer != null) ...[
             Text('Edit Player', style: Theme.of(context).textTheme.headlineSmall),
-            const SizedBox(height: 24),
+            const SizedBox(height: 16),
             TextField(
               controller: _nameController,
               decoration: const InputDecoration(labelText: 'Name/Number'),
@@ -863,16 +912,41 @@ class _EditPanelState extends State<EditPanel> {
                 widget.onPlayerUpdate();
               },
             ),
-            const SizedBox(height: 24),
+            const SizedBox(height: 16),
+            Text('Player Size: ${widget.selectedPlayer!.radius.toStringAsFixed(0)}'),
+            Slider(
+              value: widget.selectedPlayer!.radius,
+              min: 10,
+              max: 40,
+              onChanged: (value) {
+                setState(() => widget.selectedPlayer!.radius = value);
+                widget.onPlayerUpdate();
+              },
+            ),
+            const SizedBox(height: 16),
             Row(
               children: [
-                const Text('Player Color'),
+                const Text('Primary Color'),
                 const Spacer(),
                 GestureDetector(
                   onTap: () => _pickColor(context, player: widget.selectedPlayer!),
                   child: Container(
                     width: 40, height: 40,
                     decoration: BoxDecoration(color: widget.selectedPlayer!.color, shape: BoxShape.circle, border: Border.all(color: Colors.white54)),
+                  ),
+                )
+              ],
+            ),
+            const SizedBox(height: 16),
+            Row(
+              children: [
+                const Text('Secondary Color'),
+                const Spacer(),
+                GestureDetector(
+                  onTap: () => _pickColor(context, player: widget.selectedPlayer!, isPrimary: false),
+                  child: Container(
+                    width: 40, height: 40,
+                    decoration: BoxDecoration(color: widget.selectedPlayer!.color2 ?? Colors.transparent, shape: BoxShape.circle, border: Border.all(color: Colors.white54)),
                   ),
                 )
               ],
@@ -895,7 +969,7 @@ class _EditPanelState extends State<EditPanel> {
             const SizedBox(height: 24),
             Row(
               children: [
-                const Text('Home Team Color'),
+                const Text('Home Primary'),
                 const Spacer(),
                 GestureDetector(
                   onTap: () => _pickColor(context, team: Team.home),
@@ -906,16 +980,44 @@ class _EditPanelState extends State<EditPanel> {
                 )
               ],
             ),
-            const SizedBox(height: 24),
+            const SizedBox(height: 16),
             Row(
               children: [
-                const Text('Away Team Color'),
+                const Text('Home Secondary'),
+                const Spacer(),
+                GestureDetector(
+                  onTap: () => _pickColor(context, team: Team.home, isPrimary: false),
+                  child: Container(
+                    width: 40, height: 40,
+                    decoration: BoxDecoration(color: Colors.white, shape: BoxShape.circle, border: Border.all(color: Colors.white54)),
+                  ),
+                )
+              ],
+            ),
+            const Divider(height: 32),
+            Row(
+              children: [
+                const Text('Away Primary'),
                 const Spacer(),
                 GestureDetector(
                   onTap: () => _pickColor(context, team: Team.away),
                   child: Container(
                     width: 40, height: 40,
                     decoration: BoxDecoration(color: Colors.blue.shade700, shape: BoxShape.circle, border: Border.all(color: Colors.white54)),
+                  ),
+                )
+              ],
+            ),
+            const SizedBox(height: 16),
+            Row(
+              children: [
+                const Text('Away Secondary'),
+                const Spacer(),
+                GestureDetector(
+                  onTap: () => _pickColor(context, team: Team.away, isPrimary: false),
+                  child: Container(
+                    width: 40, height: 40,
+                    decoration: BoxDecoration(color: Colors.white, shape: BoxShape.circle, border: Border.all(color: Colors.white54)),
                   ),
                 )
               ],
