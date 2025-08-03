@@ -814,12 +814,50 @@ class BallWidget extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Container(
+    return SizedBox(
       width: ball.radius * 2,
       height: ball.radius * 2,
-      decoration: BoxDecoration(color: ball.color, shape: BoxShape.circle),
+      child: CustomPaint(
+        painter: SoccerBallPainter(),
+      ),
     );
   }
+}
+
+class SoccerBallPainter extends CustomPainter {
+  @override
+  void paint(Canvas canvas, Size size) {
+    final radius = size.width / 2;
+    final center = Offset(radius, radius);
+
+    // Create circular clip path
+    final clipPath = Path()..addOval(Rect.fromCircle(center: center, radius: radius));
+    canvas.clipPath(clipPath);
+
+    // Draw checkerboard pattern
+    final paint = Paint();
+    final squareSize = size.width / 3; // Adjust for desired pattern density
+
+    for (int i = -1; i <= size.width / squareSize; i++) {
+      for (int j = -1; j <= size.height / squareSize; j++) {
+        paint.color = (i + j) % 2 == 0 ? Colors.black : Colors.white;
+        canvas.drawRect(
+            Rect.fromLTWH(i * squareSize, j * squareSize, squareSize, squareSize),
+            paint
+        );
+      }
+    }
+
+    // Draw border
+    final borderPaint = Paint()
+      ..color = Colors.black
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1.0;
+    canvas.drawCircle(center, radius - 0.5, borderPaint);
+  }
+
+  @override
+  bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
 }
 
 // MARK: - Control Panel
