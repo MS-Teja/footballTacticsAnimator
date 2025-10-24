@@ -9,6 +9,7 @@ import 'package:flutter_colorpicker/flutter_colorpicker.dart';
 import 'package:file_picker/file_picker.dart';
 import 'dart:io';
 import 'dart:math' as math;
+import 'package:flutter/scheduler.dart';
 import 'package:path/path.dart' as path;
 
 void main() {
@@ -108,7 +109,7 @@ class Player {
 
 class Ball {
   Offset position;
-  Color color = Colors.white;
+  Color color = Colors.yellow;
   double radius = 12.0;
 
   Ball({required this.position});
@@ -185,15 +186,17 @@ class BoardState {
 }
 
 class AnimationKeyframe {
-  List<Player> players;
-  Ball? ball;
-  AnimationKeyframe({required this.players, this.ball});
+  BoardState boardState;
+  Uint8List? thumbnail; // To store a preview image
+
+  AnimationKeyframe({required this.boardState, this.thumbnail});
 }
 
 enum Tool { none, arrow, highlightRect, highlightOval }
 enum Team { home, away }
 enum BoardLayout { full, half }
 
+// MARK: - Main Page
 // MARK: - Main Page
 class _TacticsBoardPageState extends State<TacticsBoardPage> with TickerProviderStateMixin {
   final GlobalKey _boardKey = GlobalKey();
@@ -204,6 +207,7 @@ class _TacticsBoardPageState extends State<TacticsBoardPage> with TickerProvider
   List<AnimationKeyframe> keyframes = [];
 
   Player? selectedPlayer;
+  int? selectedKeyframeIndex;
   Tool activeTool = Tool.none;
   Offset? dragStart;
   Offset? currentDrag;
@@ -216,7 +220,7 @@ class _TacticsBoardPageState extends State<TacticsBoardPage> with TickerProvider
   late AnimationController _animationController;
 
   bool isRecording = false;
-  Timer? _recordTimer;
+  // FIX: Removed the Timer-based recording mechanism.
   final List<Uint8List> _recordedFrames = [];
 
   final List<BoardState> _history = [];
@@ -232,8 +236,17 @@ class _TacticsBoardPageState extends State<TacticsBoardPage> with TickerProvider
   @override
   void dispose() {
     _animationController.dispose();
-    _recordTimer?.cancel();
+    isRecording = false; // This will stop the callback from capturing frames
     super.dispose();
+  }
+
+  // FIX: This is the new, more reliable callback for capturing frames.
+  void _recordFrameCallback(Duration timeStamp) {
+    if (!isRecording) {
+      // The callback will continue to fire, but we simply do nothing if not recording.
+      return;
+    }
+    _captureFrame();
   }
 
   void _saveState() {
@@ -253,11 +266,7 @@ class _TacticsBoardPageState extends State<TacticsBoardPage> with TickerProvider
         final currentState = _history.removeLast();
         _redoStack.add(currentState);
         final prevState = _history.last;
-        players = prevState.players.map((p) => Player.clone(p)).toList();
-        ball = prevState.ball != null ? Ball.clone(prevState.ball!) : null;
-        arrows = List.from(prevState.arrows);
-        highlights = List.from(prevState.highlights);
-        boardLayout = prevState.boardLayout;
+        _applyBoardState(prevState);
         selectedPlayer = null;
       });
     }
@@ -268,14 +277,18 @@ class _TacticsBoardPageState extends State<TacticsBoardPage> with TickerProvider
       setState(() {
         final nextState = _redoStack.removeLast();
         _history.add(nextState);
-        players = nextState.players.map((p) => Player.clone(p)).toList();
-        ball = nextState.ball != null ? Ball.clone(nextState.ball!) : null;
-        arrows = List.from(nextState.arrows);
-        highlights = List.from(nextState.highlights);
-        boardLayout = nextState.boardLayout;
+        _applyBoardState(nextState);
         selectedPlayer = null;
       });
     }
+  }
+
+  void _applyBoardState(BoardState state) {
+    players = state.players.map((p) => Player.clone(p)).toList();
+    ball = state.ball != null ? Ball.clone(state.ball!) : null;
+    arrows = List.from(state.arrows);
+    highlights = List.from(state.highlights);
+    boardLayout = state.boardLayout;
   }
 
   void _saveToFile() async {
@@ -307,11 +320,7 @@ class _TacticsBoardPageState extends State<TacticsBoardPage> with TickerProvider
       final jsonMap = jsonDecode(jsonString);
       final state = BoardState.fromJson(jsonMap);
       setState(() {
-        players = state.players;
-        ball = state.ball;
-        arrows = state.arrows;
-        highlights = state.highlights;
-        boardLayout = state.boardLayout;
+        _applyBoardState(state);
         _history.clear();
         _redoStack.clear();
         _saveState();
@@ -343,15 +352,43 @@ class _TacticsBoardPageState extends State<TacticsBoardPage> with TickerProvider
     }
   }
 
-  void _addKeyframe() {
-    final clonedPlayers = players.map((p) => Player.clone(p)).toList();
-    final clonedBall = ball != null ? Ball.clone(ball!) : null;
+  Future<void> _addKeyframe() async {
+    final thumbnail = await _captureFrame(saveToList: false);
     setState(() {
-      keyframes.add(AnimationKeyframe(players: clonedPlayers, ball: clonedBall));
+      keyframes.add(AnimationKeyframe(
+        boardState: BoardState.clone(BoardState(players: players, ball: ball, arrows: arrows, highlights: highlights, boardLayout: boardLayout)),
+        thumbnail: thumbnail,
+      ));
     });
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(content: Text('Keyframe ${keyframes.length} added!'), duration: const Duration(seconds: 1)),
     );
+  }
+
+  void _updateKeyframe() {
+    if (selectedKeyframeIndex != null) {
+      setState(() {
+        keyframes[selectedKeyframeIndex!].boardState = BoardState.clone(BoardState(players: players, ball: ball, arrows: arrows, highlights: highlights, boardLayout: boardLayout));
+      });
+      WidgetsBinding.instance.addPostFrameCallback((_) async {
+        final thumbnail = await _captureFrame(saveToList: false);
+        setState(() {
+          keyframes[selectedKeyframeIndex!].thumbnail = thumbnail;
+        });
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Keyframe updated!'), duration: Duration(seconds: 1)),
+      );
+    }
+  }
+
+  void _deleteKeyframe() {
+    if (selectedKeyframeIndex != null) {
+      setState(() {
+        keyframes.removeAt(selectedKeyframeIndex!);
+        selectedKeyframeIndex = null;
+      });
+    }
   }
 
   void _playAnimation() {
@@ -369,12 +406,12 @@ class _TacticsBoardPageState extends State<TacticsBoardPage> with TickerProvider
       animation.addListener(() {
         setState(() {
           for (var i = 0; i < players.length; i++) {
-            final startPlayer = startFrame.players.firstWhere((p) => p.id == players[i].id, orElse: () => players[i]);
-            final endPlayer = endFrame.players.firstWhere((p) => p.id == players[i].id, orElse: () => players[i]);
+            final startPlayer = startFrame.boardState.players.firstWhere((p) => p.id == players[i].id, orElse: () => players[i]);
+            final endPlayer = endFrame.boardState.players.firstWhere((p) => p.id == players[i].id, orElse: () => players[i]);
             players[i].position = Offset.lerp(startPlayer.position, endPlayer.position, animation.value)!;
           }
-          if (ball != null && startFrame.ball != null && endFrame.ball != null) {
-            ball!.position = Offset.lerp(startFrame.ball!.position, endFrame.ball!.position, animation.value)!;
+          if (ball != null && startFrame.boardState.ball != null && endFrame.boardState.ball != null) {
+            ball!.position = Offset.lerp(startFrame.boardState.ball!.position, endFrame.boardState.ball!.position, animation.value)!;
           }
         });
       });
@@ -387,7 +424,7 @@ class _TacticsBoardPageState extends State<TacticsBoardPage> with TickerProvider
           } else {
             setState(() {
               isAnimating = false;
-              players = originalState.players; ball = originalState.ball;
+              _applyBoardState(originalState);
             });
           }
         }
@@ -395,23 +432,23 @@ class _TacticsBoardPageState extends State<TacticsBoardPage> with TickerProvider
 
       setState(() {
         isAnimating = true;
-        players = startFrame.players.map((p) => Player.clone(p)).toList();
-        ball = startFrame.ball != null ? Ball.clone(startFrame.ball!) : null;
+        _applyBoardState(startFrame.boardState);
       });
       _animationController.forward();
     }
     runAnimationSegment();
   }
 
+  // FIX: Rewritten to use the new, more reliable frame callback method.
   void _toggleRecording() {
     setState(() {
       isRecording = !isRecording;
       if (isRecording) {
         _recordedFrames.clear();
-        _recordTimer = Timer.periodic(const Duration(milliseconds: 1000 ~/ 30), (timer) { _captureFrame(); });
+        SchedulerBinding.instance.addPersistentFrameCallback(_recordFrameCallback);
         ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Recording started...'), duration: Duration(seconds: 2)));
       } else {
-        _recordTimer?.cancel();
+        // The callback will remove itself automatically on the next frame.
         _showExportDialog();
       }
     });
@@ -452,22 +489,29 @@ class _TacticsBoardPageState extends State<TacticsBoardPage> with TickerProvider
     }
   }
 
-  Future<void> _captureFrame() async {
+  Future<Uint8List?> _captureFrame({bool saveToList = true}) async {
     try {
       RenderRepaintBoundary boundary = _boardKey.currentContext!.findRenderObject() as RenderRepaintBoundary;
       ui.Image image = await boundary.toImage(pixelRatio: 1.5);
       ByteData? byteData = await image.toByteData(format: ui.ImageByteFormat.png);
-      if (byteData != null) { _recordedFrames.add(byteData.buffer.asUint8List()); }
+      if (byteData != null) {
+        final frameData = byteData.buffer.asUint8List();
+        if (saveToList) {
+          _recordedFrames.add(frameData);
+        }
+        return frameData;
+      }
     } catch (e) {
-      // Error capturing frame, can be ignored in a timer loop
+      // Error capturing frame
     }
+    return null;
   }
 
   void _resetAll() {
     setState(() {
       players.clear(); ball = null; arrows.clear(); highlights.clear();
       keyframes.clear(); selectedPlayer = null; homePlayerCount = 0;
-      awayPlayerCount = 0; activeTool = Tool.none;
+      awayPlayerCount = 0; activeTool = Tool.none; selectedKeyframeIndex = null;
     });
     _saveState();
   }
@@ -527,6 +571,7 @@ class _TacticsBoardPageState extends State<TacticsBoardPage> with TickerProvider
     } else {
       setState(() {
         selectedPlayer = null;
+        selectedKeyframeIndex = null;
       });
     }
   }
@@ -584,6 +629,18 @@ class _TacticsBoardPageState extends State<TacticsBoardPage> with TickerProvider
                       ),
                     ),
                   ),
+                ),
+                KeyframeTimeline(
+                  keyframes: keyframes,
+                  selectedIndex: selectedKeyframeIndex,
+                  onKeyframeSelected: (index) {
+                    setState(() {
+                      selectedKeyframeIndex = index;
+                      _applyBoardState(keyframes[index].boardState);
+                    });
+                  },
+                  onUpdate: _updateKeyframe,
+                  onDelete: _deleteKeyframe,
                 ),
                 ControlPanel(
                   onAddPlayer: _addPlayer, onAddBall: _addBall, onAddKeyframe: _addKeyframe,
@@ -658,7 +715,7 @@ class TacticsBoard extends StatelessWidget {
         children: [
           Image.asset(
             layout == BoardLayout.full ? 'assets/football_field.jpg' : 'assets/football_half_field.jpg',
-            fit: BoxFit.fitHeight,
+            fit: BoxFit.fitHeight
           ),
           CustomPaint(
             painter: BoardPainter(
@@ -766,35 +823,120 @@ class PlayerWidget extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      width: player.radius * 2,
-      height: player.radius * 2,
-      decoration: BoxDecoration(
-        shape: BoxShape.circle,
-        border: Border.all(
-          color: isSelected ? Colors.yellow : Colors.black,
-          width: isSelected ? 3 : 1.5,
-        ),
-      ),
-      child: ClipOval(
-        child: Stack(
-          alignment: Alignment.center,
-          children: [
-            Container(color: player.color),
-            if (player.color2 != null)
-              ClipPath(
-                clipper: HalfCircleClipper(),
-                child: Container(color: player.color2),
+    return Stack(
+      clipBehavior: Clip.none,
+      alignment: Alignment.center,
+      children: [
+        // Layer 1: The colored circle with its own shadow
+        Container(
+          width: player.radius * 2,
+          height: player.radius * 2,
+          decoration: BoxDecoration(
+            shape: BoxShape.circle,
+            border: Border.all(
+              color: isSelected ? Colors.yellow : Colors.black,
+              width: isSelected ? 3 : 1.5,
+            ),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withOpacity(0.4),
+                blurRadius: 8,
+                offset: const Offset(0, 4),
               ),
-            if (player.imageData != null)
-              Image.memory(player.imageData!, fit: BoxFit.cover, width: player.radius * 2, height: player.radius * 2),
-            if (player.imageData == null)
-              Text(player.name, style: TextStyle(color: player.textColor, fontWeight: FontWeight.bold, fontSize: player.radius * 0.8)),
-          ],
+            ],
+          ),
+          child: ClipOval(
+            child: Stack(
+              alignment: Alignment.center,
+              children: [
+                Container(color: player.color),
+                if (player.color2 != null)
+                  ClipPath(
+                    clipper: HalfCircleClipper(),
+                    child: Container(color: player.color2),
+                  ),
+                if (player.imageData == null)
+                  Text(player.name, style: TextStyle(color: player.textColor, fontWeight: FontWeight.bold, fontSize: player.radius * 0.8)),
+              ],
+            ),
+          ),
         ),
-      ),
+
+        // Layer 2: The player image, now with a soft edge
+        if (player.imageData != null)
+          Positioned(
+            top: -player.radius * 0.3,
+            child: SizedBox(
+              width: player.radius * 3,
+              height: player.radius * 3,
+              child: ShaderMask( // FIX: Wrap the image in a ShaderMask for the fade effect
+                shaderCallback: (rect) {
+                  // This gradient goes from fully visible (white) to fully transparent.
+                  return LinearGradient(
+                    begin: Alignment.topCenter,
+                    end: Alignment.bottomCenter,
+                    // The stops control where the fade happens.
+                    // It's fully visible for the top 38% and fades out over the next 10%.
+                    stops: const [0.0, 0.38, 0.65],
+                    colors: [Colors.white, Colors.white, Colors.white.withOpacity(0.0)],
+                  ).createShader(rect);
+                },
+                blendMode: BlendMode.dstIn, // This applies the gradient's transparency to the image
+                child: ClipPath( // We still clip the shape, but now it has a soft edge from the mask
+                  clipper: PlayerImageClipper(playerRadius: player.radius),
+                  child: Stack(
+                    alignment: Alignment.center,
+                    children: [
+                      // The "shadow" layer
+                      Transform.translate(
+                        offset: const Offset(2, 4),
+                        child: ImageFiltered(
+                          imageFilter: ui.ImageFilter.blur(sigmaX: 3.0, sigmaY: 3.0),
+                          child: Image.memory(
+                            player.imageData!,
+                            color: Colors.black.withOpacity(0.6),
+                            colorBlendMode: BlendMode.srcIn,
+                            fit: BoxFit.contain,
+                          ),
+                        ),
+                      ),
+                      // The actual image
+                      Image.memory(
+                        player.imageData!,
+                        fit: BoxFit.contain,
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ),
+      ],
     );
   }
+}
+
+class PlayerImageClipper extends CustomClipper<Path> {
+  final double playerRadius;
+
+  PlayerImageClipper({required this.playerRadius});
+
+  @override
+  Path getClip(Size size) {
+    final circleCenter = Offset(size.width / 2, playerRadius * 1.8);
+    final circlePath = Path()
+      ..addOval(Rect.fromCenter(
+        center: circleCenter,
+        width: playerRadius * 2,
+        height: playerRadius * 2,
+      ));
+    final rectPath = Path()
+      ..addRect(Rect.fromLTWH(0, 0, size.width, circleCenter.dy));
+    return Path.combine(PathOperation.union, circlePath, rectPath);
+  }
+
+  @override
+  bool shouldReclip(covariant CustomClipper<Path> oldClipper) => true;
 }
 
 class HalfCircleClipper extends CustomClipper<Path> {
@@ -808,6 +950,7 @@ class HalfCircleClipper extends CustomClipper<Path> {
   bool shouldReclip(CustomClipper<Path> oldClipper) => false;
 }
 
+
 class BallWidget extends StatelessWidget {
   final Ball ball;
   const BallWidget({super.key, required this.ball});
@@ -818,13 +961,17 @@ class BallWidget extends StatelessWidget {
       width: ball.radius * 2,
       height: ball.radius * 2,
       child: CustomPaint(
-        painter: SoccerBallPainter(),
+        painter: SoccerBallPainter(ball: ball),
       ),
     );
   }
 }
 
 class SoccerBallPainter extends CustomPainter {
+  final Ball ball;
+
+  SoccerBallPainter({required this.ball});
+
   @override
   void paint(Canvas canvas, Size size) {
     final radius = size.width / 2;
@@ -857,7 +1004,8 @@ class SoccerBallPainter extends CustomPainter {
   }
 
   @override
-  bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
+  bool shouldRepaint(covariant SoccerBallPainter oldDelegate) =>
+      ball.radius != oldDelegate.ball.radius || ball.color != oldDelegate.ball.color;
 }
 
 // MARK: - Control Panel
@@ -1107,6 +1255,75 @@ class _EditPanelState extends State<EditPanel> {
           ),
         )
       ],
+    );
+  }
+}
+
+// MARK: - Keyframe Timeline
+class KeyframeTimeline extends StatelessWidget {
+  final List<AnimationKeyframe> keyframes;
+  final int? selectedIndex;
+  final Function(int) onKeyframeSelected;
+  final VoidCallback onUpdate;
+  final VoidCallback onDelete;
+
+  const KeyframeTimeline({
+    super.key,
+    required this.keyframes,
+    this.selectedIndex,
+    required this.onKeyframeSelected,
+    required this.onUpdate,
+    required this.onDelete,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      height: 120,
+      color: Theme.of(context).cardColor,
+      padding: const EdgeInsets.all(8.0),
+      child: Column(
+        children: [
+          if (selectedIndex != null)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 8.0),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  ElevatedButton.icon(icon: const Icon(Icons.update), label: const Text("Update Keyframe"), onPressed: onUpdate),
+                  const SizedBox(width: 16),
+                  ElevatedButton.icon(icon: const Icon(Icons.delete), label: const Text("Delete Keyframe"), onPressed: onDelete, style: ElevatedButton.styleFrom(backgroundColor: Colors.red.shade900)),
+                ],
+              ),
+            ),
+          Expanded(
+            child: ListView.builder(
+              scrollDirection: Axis.horizontal,
+              itemCount: keyframes.length,
+              itemBuilder: (context, index) {
+                final keyframe = keyframes[index];
+                return GestureDetector(
+                  onTap: () => onKeyframeSelected(index),
+                  child: Container(
+                    width: 120,
+                    margin: const EdgeInsets.symmetric(horizontal: 4.0),
+                    decoration: BoxDecoration(
+                      border: Border.all(
+                        color: selectedIndex == index ? Colors.amber : Colors.grey.shade700,
+                        width: 3,
+                      ),
+                      borderRadius: BorderRadius.circular(4),
+                    ),
+                    child: keyframe.thumbnail != null
+                        ? Image.memory(keyframe.thumbnail!, fit: BoxFit.cover)
+                        : const Center(child: Text('No Preview')),
+                  ),
+                );
+              },
+            ),
+          ),
+        ],
+      ),
     );
   }
 }
