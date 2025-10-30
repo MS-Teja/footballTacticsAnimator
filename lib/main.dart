@@ -9,8 +9,6 @@ import 'package:flutter_colorpicker/flutter_colorpicker.dart';
 import 'package:file_picker/file_picker.dart';
 import 'dart:io';
 import 'dart:math' as math;
-import 'package:flutter/scheduler.dart';
-import 'package:path/path.dart' as path;
 
 void main() {
   runApp(const MyApp());
@@ -81,9 +79,9 @@ class Player {
     'name': name,
     'dx': position.dx,
     'dy': position.dy,
-    'color': {'a': color.alpha, 'r': color.red, 'g': color.green, 'b': color.blue},
-    'color2': color2 != null ? {'a': color2!.alpha, 'r': color2!.red, 'g': color2!.green, 'b': color2!.blue} : null,
-    'textColor': {'a': textColor.alpha, 'r': textColor.red, 'g': textColor.green, 'b': textColor.blue},
+    'color': {'a': (color.a * 255.0).round() & 0xff, 'r': (color.r * 255.0).round() & 0xff, 'g': (color.g * 255.0).round() & 0xff, 'b': (color.b * 255.0).round() & 0xff},
+    'color2': color2 != null ? {'a': (color2!.a * 255.0).round() & 0xff, 'r': (color2!.r * 255.0).round() & 0xff, 'g': (color2!.g * 255.0).round() & 0xff, 'b': (color2!.b * 255.0).round() & 0xff} : null,
+    'textColor': {'a': (textColor.a * 255.0).round() & 0xff, 'r': (textColor.r * 255.0).round() & 0xff, 'g': (textColor.g * 255.0).round() & 0xff, 'b': (textColor.b * 255.0).round() & 0xff},
     'radius': radius,
     'imageData': imageData != null ? base64Encode(imageData!) : null,
     'team': team.index,
@@ -122,7 +120,7 @@ class Ball {
   Map<String, dynamic> toJson() => {
     'dx': position.dx,
     'dy': position.dy,
-    'color': {'a': color.alpha, 'r': color.red, 'g': color.green, 'b': color.blue},
+    'color': {'a': (color.a * 255.0).round() & 0xff, 'r': (color.r * 255.0).round() & 0xff, 'g': (color.g * 255.0).round() & 0xff, 'b': (color.b * 255.0).round() & 0xff},
     'radius': radius,
   };
 
@@ -137,10 +135,34 @@ class Ball {
 class Arrow {
   Offset start;
   Offset end;
-  Arrow({required this.start, required this.end});
+  Offset? controlPoint; // For curved arrows
+  bool isCurved;
+  
+  Arrow({required this.start, required this.end, this.controlPoint, this.isCurved = false});
 
-  Map<String, dynamic> toJson() => {'startX': start.dx, 'startY': start.dy, 'endX': end.dx, 'endY': end.dy};
-  factory Arrow.fromJson(Map<String, dynamic> json) => Arrow(start: Offset(json['startX'], json['startY']), end: Offset(json['endX'], json['endY']));
+  Map<String, dynamic> toJson() => {
+    'startX': start.dx, 
+    'startY': start.dy, 
+    'endX': end.dx, 
+    'endY': end.dy,
+    'isCurved': isCurved,
+    'controlX': controlPoint?.dx,
+    'controlY': controlPoint?.dy,
+  };
+  
+  factory Arrow.fromJson(Map<String, dynamic> json) {
+    final isCurved = json['isCurved'] ?? false;
+    Offset? controlPoint;
+    if (isCurved && json['controlX'] != null && json['controlY'] != null) {
+      controlPoint = Offset(json['controlX'], json['controlY']);
+    }
+    return Arrow(
+      start: Offset(json['startX'], json['startY']), 
+      end: Offset(json['endX'], json['endY']),
+      controlPoint: controlPoint,
+      isCurved: isCurved,
+    );
+  }
 }
 
 class Highlight {
@@ -192,7 +214,7 @@ class AnimationKeyframe {
   AnimationKeyframe({required this.boardState, this.thumbnail});
 }
 
-enum Tool { none, arrow, highlightRect, highlightOval }
+enum Tool { none, arrow, curvedArrowLeft, curvedArrowRight, highlightRect, highlightOval }
 enum Team { home, away }
 enum BoardLayout { full, half }
 
@@ -220,8 +242,9 @@ class _TacticsBoardPageState extends State<TacticsBoardPage> with TickerProvider
   late AnimationController _animationController;
 
   bool isRecording = false;
-  // FIX: Removed the Timer-based recording mechanism.
-  final List<Uint8List> _recordedFrames = [];
+  bool isFullscreenRecording = false;
+  bool _showFullscreenControls = false;
+  Timer? _controlsHideTimer;
 
   final List<BoardState> _history = [];
   final List<BoardState> _redoStack = [];
@@ -236,17 +259,9 @@ class _TacticsBoardPageState extends State<TacticsBoardPage> with TickerProvider
   @override
   void dispose() {
     _animationController.dispose();
+    _controlsHideTimer?.cancel();
     isRecording = false; // This will stop the callback from capturing frames
     super.dispose();
-  }
-
-  // FIX: This is the new, more reliable callback for capturing frames.
-  void _recordFrameCallback(Duration timeStamp) {
-    if (!isRecording) {
-      // The callback will continue to fire, but we simply do nothing if not recording.
-      return;
-    }
-    _captureFrame();
   }
 
   void _saveState() {
@@ -360,6 +375,7 @@ class _TacticsBoardPageState extends State<TacticsBoardPage> with TickerProvider
         thumbnail: thumbnail,
       ));
     });
+    if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(content: Text('Keyframe ${keyframes.length} added!'), duration: const Duration(seconds: 1)),
     );
@@ -439,70 +455,57 @@ class _TacticsBoardPageState extends State<TacticsBoardPage> with TickerProvider
     runAnimationSegment();
   }
 
-  // FIX: Rewritten to use the new, more reliable frame callback method.
+  void _stopAnimation() {
+    if (!isAnimating) return;
+    _animationController.stop();
+    setState(() {
+      isAnimating = false;
+    });
+  }
+
+  // Recording mode: Enter fullscreen for screen recording
   void _toggleRecording() {
     setState(() {
       isRecording = !isRecording;
-      if (isRecording) {
-        _recordedFrames.clear();
-        SchedulerBinding.instance.addPersistentFrameCallback(_recordFrameCallback);
-        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Recording started...'), duration: Duration(seconds: 2)));
-      } else {
-        // The callback will remove itself automatically on the next frame.
-        _showExportDialog();
+      isFullscreenRecording = isRecording;
+      
+      if (!isRecording) {
+        // Show completion message when stopping
+        _showRecordingCompleteMessage();
       }
     });
   }
 
-  Future<void> _showExportDialog() async {
-    if (_recordedFrames.isEmpty || !mounted) return;
-
-    showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Recording Stopped'),
-        content: Text('Captured ${_recordedFrames.length} frames. Would you like to export them as an image sequence?'),
-        actions: [
-          TextButton(onPressed: () => Navigator.of(context).pop(), child: const Text('Discard')),
-          ElevatedButton(onPressed: () {
-            Navigator.of(context).pop();
-            _exportFrames();
-          }, child: const Text('Export')),
-        ],
+  void _showRecordingCompleteMessage() {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: const Text(
+          'Recording stopped',
+          style: TextStyle(fontSize: 12),
+        ),
+        duration: const Duration(seconds: 2),
+        behavior: SnackBarBehavior.floating,
+        margin: EdgeInsets.only(
+          top: 50,
+          right: 20,
+          left: MediaQuery.of(context).size.width - 200,
+          bottom: MediaQuery.of(context).size.height - 100,
+        ),
       ),
     );
   }
 
-  Future<void> _exportFrames() async {
-    String? outputDirectory = await FilePicker.platform.getDirectoryPath(
-      dialogTitle: 'Please select a directory to save frames:',
-    );
-
-    if (outputDirectory != null) {
-      for (int i = 0; i < _recordedFrames.length; i++) {
-        final frameNumber = (i + 1).toString().padLeft(4, '0');
-        final file = File(path.join(outputDirectory, 'frame_$frameNumber.png'));
-        await file.writeAsBytes(_recordedFrames[i]);
-      }
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Exported ${_recordedFrames.length} frames!')));
-    }
-  }
-
-  Future<Uint8List?> _captureFrame({bool saveToList = true}) async {
+  Future<Uint8List?> _captureFrame({bool saveToList = false}) async {
     try {
       RenderRepaintBoundary boundary = _boardKey.currentContext!.findRenderObject() as RenderRepaintBoundary;
       ui.Image image = await boundary.toImage(pixelRatio: 1.5);
       ByteData? byteData = await image.toByteData(format: ui.ImageByteFormat.png);
       if (byteData != null) {
-        final frameData = byteData.buffer.asUint8List();
-        if (saveToList) {
-          _recordedFrames.add(frameData);
-        }
-        return frameData;
+        return byteData.buffer.asUint8List();
       }
     } catch (e) {
-      // Error capturing frame
+      debugPrint('Error capturing frame: $e');
     }
     return null;
   }
@@ -586,7 +589,33 @@ class _TacticsBoardPageState extends State<TacticsBoardPage> with TickerProvider
     if (activeTool != Tool.none && dragStart != null && currentDrag != null) {
       setState(() {
         if (activeTool == Tool.arrow) {
-          arrows.add(Arrow(start: dragStart!, end: currentDrag!));
+          arrows.add(Arrow(start: dragStart!, end: currentDrag!, isCurved: false));
+        } else if (activeTool == Tool.curvedArrowLeft || activeTool == Tool.curvedArrowRight) {
+          // Calculate control point for curve (perpendicular to midpoint)
+          final midpoint = Offset(
+            (dragStart!.dx + currentDrag!.dx) / 2,
+            (dragStart!.dy + currentDrag!.dy) / 2,
+          );
+          final dx = currentDrag!.dx - dragStart!.dx;
+          final dy = currentDrag!.dy - dragStart!.dy;
+          final length = math.sqrt(dx * dx + dy * dy);
+          final curvature = length * 0.3; // 30% curve
+          
+          // Direction is determined by which button was clicked
+          final direction = activeTool == Tool.curvedArrowLeft ? -1.0 : 1.0;
+          
+          // Perpendicular offset
+          final controlPoint = Offset(
+            midpoint.dx - dy / length * curvature * direction,
+            midpoint.dy + dx / length * curvature * direction,
+          );
+          
+          arrows.add(Arrow(
+            start: dragStart!, 
+            end: currentDrag!, 
+            controlPoint: controlPoint,
+            isCurved: true,
+          ));
         } else if (activeTool == Tool.highlightRect) {
           highlights.add(Highlight(rect: Rect.fromPoints(dragStart!, currentDrag!)));
         } else if (activeTool == Tool.highlightOval) {
@@ -602,6 +631,81 @@ class _TacticsBoardPageState extends State<TacticsBoardPage> with TickerProvider
 
   @override
   Widget build(BuildContext context) {
+    // Fullscreen mode for screen recording
+    if (isFullscreenRecording) {
+      return Scaffold(
+        body: GestureDetector(
+          onDoubleTap: () {
+            setState(() {
+              _showFullscreenControls = !_showFullscreenControls;
+            });
+            if (_showFullscreenControls) {
+              _controlsHideTimer?.cancel();
+              _controlsHideTimer = Timer(const Duration(seconds: 3), () {
+                if (mounted) {
+                  setState(() => _showFullscreenControls = false);
+                }
+              });
+            }
+          },
+          child: Stack(
+            children: [
+              RepaintBoundary(
+                key: _boardKey,
+                child: TacticsBoard(
+                  players: players, ball: ball, arrows: arrows, highlights: highlights,
+                  dragStart: dragStart, currentDrag: currentDrag, activeTool: Tool.none,
+                  selectedPlayer: null,
+                  layout: boardLayout,
+                  onPlayerTap: _onPlayerTap, onPlayerDragUpdate: _onPlayerDragUpdate, onBallDragUpdate: _onBallDragUpdate,
+                  onPlayerDragEnd: _onPlayerDragEnd, onBallDragEnd: _onPlayerDragEnd,
+                ),
+              ),
+              // Side controls that auto-hide
+              AnimatedPositioned(
+                duration: const Duration(milliseconds: 300),
+                right: _showFullscreenControls ? 20 : -100,
+                top: MediaQuery.of(context).size.height / 2 - 80,
+                child: IgnorePointer(
+                  ignoring: !_showFullscreenControls,
+                  child: Column(
+                    children: [
+                      // Exit fullscreen button
+                      FloatingActionButton(
+                        heroTag: 'exit',
+                        onPressed: () {
+                          setState(() => isFullscreenRecording = false);
+                          _controlsHideTimer?.cancel();
+                        },
+                        child: const Icon(Icons.fullscreen_exit),
+                      ),
+                      const SizedBox(height: 16),
+                      // Play/Pause button
+                      FloatingActionButton(
+                        heroTag: 'play',
+                        onPressed: () {
+                          if (isAnimating) {
+                            _stopAnimation();
+                          } else {
+                            _playAnimation();
+                          }
+                          // Hide controls immediately when play is pressed
+                          setState(() => _showFullscreenControls = false);
+                          _controlsHideTimer?.cancel();
+                        },
+                        child: Icon(isAnimating ? Icons.pause : Icons.play_arrow),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
+    // Normal editing mode
     return Scaffold(
       appBar: AppBar(title: const Text('Tactics Animator'), elevation: 0),
       body: Row(
@@ -768,11 +872,15 @@ class BoardPainter extends CustomPainter {
 
   @override
   void paint(Canvas canvas, Size size) {
-    final arrowPaint = Paint()..color = Colors.yellow..strokeWidth = 3..style = PaintingStyle.stroke;
+    final arrowPaint = Paint()..color = Colors.white..strokeWidth = 3..style = PaintingStyle.stroke;
     final highlightPaint = Paint()..color = const Color(0x4DFFFF00);
 
     for (var arrow in arrows) {
-      _drawArrow(canvas, arrow.start, arrow.end, arrowPaint);
+      if (arrow.isCurved && arrow.controlPoint != null) {
+        _drawCurvedArrow(canvas, arrow.start, arrow.end, arrow.controlPoint!, arrowPaint);
+      } else {
+        _drawArrow(canvas, arrow.start, arrow.end, arrowPaint);
+      }
     }
 
     for (var highlight in highlights) {
@@ -785,8 +893,29 @@ class BoardPainter extends CustomPainter {
 
     if (dragStart != null && currentDrag != null) {
       if (activeTool == Tool.arrow) {
-        arrowPaint.color = const Color(0xCCFFFF00);
+        arrowPaint.color = Colors.white;
         _drawArrow(canvas, dragStart!, currentDrag!, arrowPaint);
+      } else if (activeTool == Tool.curvedArrowLeft || activeTool == Tool.curvedArrowRight) {
+        arrowPaint.color = Colors.white;
+        // Preview curved arrow
+        final midpoint = Offset(
+          (dragStart!.dx + currentDrag!.dx) / 2,
+          (dragStart!.dy + currentDrag!.dy) / 2,
+        );
+        final dx = currentDrag!.dx - dragStart!.dx;
+        final dy = currentDrag!.dy - dragStart!.dy;
+        final length = math.sqrt(dx * dx + dy * dy);
+        final curvature = length * 0.3;
+        
+        // Direction matches the selected tool
+        final direction = activeTool == Tool.curvedArrowLeft ? -1.0 : 1.0;
+        
+        final controlPoint = Offset(
+          midpoint.dx - dy / length * curvature * direction,
+          midpoint.dy + dx / length * curvature * direction,
+        );
+        
+        _drawCurvedArrow(canvas, dragStart!, currentDrag!, controlPoint, arrowPaint);
       } else if (activeTool == Tool.highlightRect) {
         highlightPaint.color = const Color(0x80FFFF00);
         canvas.drawRect(Rect.fromPoints(dragStart!, currentDrag!), highlightPaint);
@@ -809,6 +938,33 @@ class BoardPainter extends CustomPainter {
     path.lineTo(end.dx, end.dy);
     path.lineTo(end.dx - arrowSize * math.cos(angle + arrowAngle), end.dy - arrowSize * math.sin(angle + arrowAngle));
     canvas.drawPath(path, paint..style = PaintingStyle.stroke);
+  }
+
+  void _drawCurvedArrow(Canvas canvas, Offset start, Offset end, Offset controlPoint, Paint paint) {
+    final path = Path();
+    path.moveTo(start.dx, start.dy);
+    path.quadraticBezierTo(controlPoint.dx, controlPoint.dy, end.dx, end.dy);
+    canvas.drawPath(path, paint);
+    
+    // Draw arrowhead at the end
+    // Calculate the tangent at the end point
+    const t = 0.95; // Sample point near the end to get direction
+    final nearEnd = Offset(
+      (1 - t) * (1 - t) * start.dx + 2 * (1 - t) * t * controlPoint.dx + t * t * end.dx,
+      (1 - t) * (1 - t) * start.dy + 2 * (1 - t) * t * controlPoint.dy + t * t * end.dy,
+    );
+    
+    final delta = end - nearEnd;
+    if (delta.distance < 1) return;
+    final angle = delta.direction;
+    const arrowSize = 15.0;
+    const arrowAngle = math.pi / 6;
+    
+    final arrowPath = Path();
+    arrowPath.moveTo(end.dx - arrowSize * math.cos(angle - arrowAngle), end.dy - arrowSize * math.sin(angle - arrowAngle));
+    arrowPath.lineTo(end.dx, end.dy);
+    arrowPath.lineTo(end.dx - arrowSize * math.cos(angle + arrowAngle), end.dy - arrowSize * math.sin(angle + arrowAngle));
+    canvas.drawPath(arrowPath, paint);
   }
 
   @override
@@ -839,7 +995,7 @@ class PlayerWidget extends StatelessWidget {
             ),
             boxShadow: [
               BoxShadow(
-                color: Colors.black.withOpacity(0.4),
+                color: Colors.black.withValues(alpha: 0.4),
                 blurRadius: 8,
                 offset: const Offset(0, 4),
               ),
@@ -878,7 +1034,7 @@ class PlayerWidget extends StatelessWidget {
                     // The stops control where the fade happens.
                     // It's fully visible for the top 38% and fades out over the next 10%.
                     stops: const [0.0, 0.38, 0.65],
-                    colors: [Colors.white, Colors.white, Colors.white.withOpacity(0.0)],
+                    colors: [Colors.white, Colors.white, Colors.white.withValues(alpha: 0.0)],
                   ).createShader(rect);
                 },
                 blendMode: BlendMode.dstIn, // This applies the gradient's transparency to the image
@@ -894,7 +1050,7 @@ class PlayerWidget extends StatelessWidget {
                           imageFilter: ui.ImageFilter.blur(sigmaX: 3.0, sigmaY: 3.0),
                           child: Image.memory(
                             player.imageData!,
-                            color: Colors.black.withOpacity(0.6),
+                            color: Colors.black.withValues(alpha: 0.6),
                             colorBlendMode: BlendMode.srcIn,
                             fit: BoxFit.contain,
                           ),
@@ -1048,11 +1204,13 @@ class ControlPanel extends StatelessWidget {
           _buildIconButton(context, tip: 'Play Animation', icon: Icons.play_arrow, onPressed: isAnimating ? null : onPlayAnimation),
           const VerticalDivider(),
           _buildIconButton(context, tip: 'Draw Arrow', icon: Icons.arrow_forward, onPressed: () => onToolSelected(Tool.arrow), isActive: activeTool == Tool.arrow),
+          _buildIconButton(context, tip: 'Curved Arrow (Left)', icon: Icons.turn_left, onPressed: () => onToolSelected(Tool.curvedArrowLeft), isActive: activeTool == Tool.curvedArrowLeft),
+          _buildIconButton(context, tip: 'Curved Arrow (Right)', icon: Icons.turn_right, onPressed: () => onToolSelected(Tool.curvedArrowRight), isActive: activeTool == Tool.curvedArrowRight),
           _buildIconButton(context, tip: 'Highlight Rectangle', icon: Icons.crop_square, onPressed: () => onToolSelected(Tool.highlightRect), isActive: activeTool == Tool.highlightRect),
           _buildIconButton(context, tip: 'Highlight Oval', icon: Icons.circle_outlined, onPressed: () => onToolSelected(Tool.highlightOval), isActive: activeTool == Tool.highlightOval),
           const VerticalDivider(),
           _buildIconButton(context, tip: 'Switch Layout', icon: Icons.crop_landscape, onPressed: onToggleLayout),
-          _buildIconButton(context, tip: isRecording ? 'Stop Recording' : 'Record Animation', icon: isRecording ? Icons.stop : Icons.videocam, color: isRecording ? Colors.red : Colors.cyan, onPressed: onToggleRecording),
+          _buildIconButton(context, tip: isRecording ? 'Exit Fullscreen' : 'Fullscreen Mode', icon: isRecording ? Icons.fullscreen_exit : Icons.fullscreen, color: isRecording ? Colors.red : Colors.cyan, onPressed: onToggleRecording),
           _buildIconButton(context, tip: 'Clear Drawings', icon: Icons.layers_clear, onPressed: onClearDrawings),
           _buildIconButton(context, tip: 'Reset Board', icon: Icons.refresh, onPressed: onResetAll),
         ],

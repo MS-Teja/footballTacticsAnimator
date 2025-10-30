@@ -1,25 +1,56 @@
 # Football Tactics Animator
 
-**A powerful and intuitive desktop application for macOS, built with Flutter, designed for football coaches, analysts, and content creators.**  
+**A powerful and intuitive desktop application for macOS, built with Flutter, designed for football coaches, analysts, and content creators.**
 This tool allows you to create dynamic tactical animations, perfect for team meetings, analysis videos, and social media content.
 
 Bring your tactical ideas to life by animating player movements, drawing runs, and highlighting key areas of the pitch with a professional and easy-to-use interface.
 
 ## Features
 
-- **Interactive Tactics Board:** A smooth, responsive canvas with a football pitch background.
-- **Player & Ball Management:** Add, remove, and position home players, away players, and a ball.
-- **Keyframe Animation System:** Create complex animations by setting player positions at different keyframes. The app smoothly animates the transitions between them.
-- **Drawing Tools:**
-    - Draw arrows with arrowheads to illustrate player runs or pass directions.
-    - Highlight key tactical areas with both rectangular and oval shapes.
-- **Undo & Redo:** A complete history system allows you to undo and redo any action, from moving a player to drawing a shape.
-- **Save & Load Projects:** Save your entire tactical setup—including all players, their positions, keyframes, and drawings—to a `.json` file. Load projects to continue your work later.
-- **Deep Customization:**
-    - **Individual Players:** Select any player to change their name/number, color, or even upload a custom image to display on their token.
-    - **Team Colors:** Quickly change the color for the entire home or away team at once.
-- **Animation Recording:** Capture your animations frame-by-frame. *(Note: Currently captures frames; video export functionality is a future goal).*
-- **Quick Cleanup:** Instantly clear all drawings from the board without affecting your player setup.
+### 🎬 Advanced Animation System (NEW!)
+- **High-Quality Recording:** Export animations as PNG image sequences at up to 60 FPS
+- **Configurable Settings:** Adjust FPS (15-60) and transition duration (0.5-5.0s) per your needs
+- **Professional Output:** 3x resolution capture for crisp, broadcast-quality frames
+- **Unlimited Keyframes:** Create complex multi-step animations with smooth interpolation
+- **Real-time Preview:** Play animations before recording to perfect your tactics
+
+### ⚽ Interactive Tactics Board
+- **Smooth Canvas:** Responsive football pitch with full/half field layouts
+- **Drag & Drop:** Intuitive player and ball positioning
+- **Visual Feedback:** Selected players highlighted in yellow
+- **High Performance:** Optimized rendering for smooth interactions
+
+### 👥 Player & Ball Management
+- **Two Teams:** Distinct home (red) and away (blue) players
+- **Custom Images:** Upload player photos for realistic boards
+- **Flexible Sizing:** Adjust player token sizes individually or by team
+- **Custom Colors:** Set primary, secondary, and text colors for each player
+
+### 🎨 Professional Drawing Tools
+- **Straight Arrows:** Show direct player runs and passing lanes with arrowheads
+- **Curved Arrows (Left/Right):** Display curved movements, runs around defenders, or arcing passes
+- **Rectangular Highlights:** Mark zones, channels, and areas of play
+- **Oval Highlights:** Emphasize positions and danger areas
+- **Quick Clear:** Remove all drawings with one click
+
+### 💾 Project Management
+- **Save Projects:** Export complete tactical setups to JSON files
+- **Load Projects:** Resume work on saved animations
+- **Undo/Redo:** Full history system for all actions
+- **State Preservation:** Maintains all players, positions, keyframes, and drawings
+
+### 🎯 Keyframe Animation
+- **Easy Creation:** Add keyframes with current board state
+- **Visual Timeline:** Thumbnail previews of each keyframe
+- **Update & Delete:** Modify existing keyframes anytime
+- **Smooth Transitions:** Eased interpolation between keyframes
+
+### 📊 Export & Sharing
+- **Fullscreen Recording Mode:** Clean, distraction-free view for screen recording
+- **Auto-Hide Controls:** Double-click to show/hide controls during recording
+- **Side-Positioned Controls:** Exit and play/pause buttons slide in from the right
+- **Screen Recording Ready:** Optimized for macOS screen capture (Cmd+Shift+5)
+- **Professional Presentation:** No UI clutter in your recordings
 
 ## Getting Started
 
@@ -38,7 +69,7 @@ Follow these instructions to get the project running on your local machine.
     cd football-tactics-animator
     ```
 
-2. **Add Dependencies:**  
+2. **Add Dependencies:**
    This project uses several packages for its functionality. Open the `pubspec.yaml` file and ensure the following dependencies are listed:
     ```yaml
     dependencies:
@@ -74,7 +105,7 @@ Follow these instructions to get the project running on your local machine.
     - Click **+ Capability** and add **App Sandbox**.
     - In the new App Sandbox section, find **File Access > User Selected File** and set its permission to **Read/Write**.
 
-5. **Run the App:**  
+5. **Run the App:**
    Now, you can run the application from your code editor or via the terminal:
     ```sh
     flutter run -d macos
@@ -91,7 +122,13 @@ Follow these instructions to get the project running on your local machine.
     4. Click "Add Keyframe" again.
     5. Repeat to build your sequence.
 - **Play Animation:** Click the "Play" button to see your tactical movement come to life.
-- **Draw on the Pitch:** Use the "Draw Arrow," "Highlight Rect," or "Highlight Oval" tools to add analysis.
+- **Draw on the Pitch:** Use straight arrows, curved arrows (left/right), rectangular highlights, or oval highlights to add analysis.
+- **Record with Screen Capture:**
+    1. Click the fullscreen icon to enter recording mode.
+    2. Use macOS screen recording (Cmd+Shift+5) to capture your animation.
+    3. Double-click to show controls, then click play to start animation.
+    4. Controls auto-hide after 3 seconds for clean recording.
+    5. Click fullscreen exit icon to return to editing mode.
 - **Customize:** Click on a player to open the edit panel. Change their name, color, or upload a photo. Use the team color pickers in the edit panel to change colors for all players on a team.
 - **Save Your Work:** Click "Save" to export your project to a file. Use "Load" to open it again later.
 
