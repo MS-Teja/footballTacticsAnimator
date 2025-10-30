@@ -7,12 +7,12 @@ Bring your tactical ideas to life by animating player movements, drawing runs, a
 
 ## Features
 
-### 🎬 Advanced Animation System (NEW!)
-- **High-Quality Recording:** Export animations as PNG image sequences at up to 60 FPS
-- **Configurable Settings:** Adjust FPS (15-60) and transition duration (0.5-5.0s) per your needs
-- **Professional Output:** 3x resolution capture for crisp, broadcast-quality frames
-- **Unlimited Keyframes:** Create complex multi-step animations with smooth interpolation
+### 🎬 Animation System
+- **Smooth Keyframe Animation:** Create complex multi-step animations with automatic interpolation
+- **Visual Timeline:** Thumbnail previews of each keyframe for easy management
 - **Real-time Preview:** Play animations before recording to perfect your tactics
+- **Fullscreen Recording:** Clean, distraction-free mode optimized for screen capture
+- **Professional Output:** Record directly using macOS screen capture tools
 
 ### ⚽ Interactive Tactics Board
 - **Smooth Canvas:** Responsive football pitch with full/half field layouts
