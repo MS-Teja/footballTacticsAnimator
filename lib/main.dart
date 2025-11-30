@@ -2,13 +2,14 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:typed_data';
 import 'dart:ui' as ui;
+import 'package:flutter/services.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:flutter_colorpicker/flutter_colorpicker.dart';
-import 'package:file_picker/file_picker.dart';
-import 'dart:io';
 import 'dart:math' as math;
+import 'utils/fullscreen_helper.dart';
+import 'utils/file_helper.dart';
 
 void main() {
   runApp(const MyApp());
@@ -248,12 +249,54 @@ class _TacticsBoardPageState extends State<TacticsBoardPage> with TickerProvider
 
   final List<BoardState> _history = [];
   final List<BoardState> _redoStack = [];
+  BoardState? _savedStateBeforeAnimation;
+
+  Uint8List? customPitchImage;
 
   @override
   void initState() {
     super.initState();
     _animationController = AnimationController(vsync: this);
+    _animationController.addListener(_onAnimationTick);
+    _animationController.addStatusListener(_onAnimationStatus);
     _saveState();
+  }
+
+  Future<void> _pickPitchImage() async {
+    final ImagePicker picker = ImagePicker();
+    final XFile? image = await picker.pickImage(source: ImageSource.gallery);
+    if (image != null) {
+      final bytes = await image.readAsBytes();
+      setState(() {
+        customPitchImage = bytes;
+      });
+    }
+  }
+
+  void _showToast(String message) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).clearSnackBars();
+    
+    // Calculate margins to position the toast at the bottom left with a fixed width
+    final screenWidth = MediaQuery.of(context).size.width;
+    const toastWidth = 200.0;
+    const margin = 10.0;
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(message, style: const TextStyle(fontSize: 12), textAlign: TextAlign.center),
+        behavior: SnackBarBehavior.floating,
+        // Force the snackbar to the bottom left by setting a large right margin
+        margin: EdgeInsets.only(
+          left: margin,
+          bottom: margin,
+          right: screenWidth - toastWidth - margin,
+        ),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+        duration: const Duration(seconds: 2),
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+      ),
+    );
   }
 
   @override
@@ -310,28 +353,14 @@ class _TacticsBoardPageState extends State<TacticsBoardPage> with TickerProvider
     final state = BoardState(players: players, ball: ball, arrows: arrows, highlights: highlights, boardLayout: boardLayout);
     final jsonString = jsonEncode(state.toJson());
 
-    String? outputFile = await FilePicker.platform.saveFile(
-      dialogTitle: 'Please select an output file:',
-      fileName: 'tactics.json',
-    );
-
-    if (outputFile != null) {
-      final file = File(outputFile);
-      await file.writeAsString(jsonString);
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Project Saved!')));
-    }
+    await saveProject(jsonString, 'tactics.json');
+    _showToast('Project Saved!');
   }
 
   void _loadFromFile() async {
-    FilePickerResult? result = await FilePicker.platform.pickFiles(
-      type: FileType.custom,
-      allowedExtensions: ['json'],
-    );
+    final jsonString = await loadProject();
 
-    if (result != null && result.files.single.path != null) {
-      final file = File(result.files.single.path!);
-      final jsonString = await file.readAsString();
+    if (jsonString != null) {
       final jsonMap = jsonDecode(jsonString);
       final state = BoardState.fromJson(jsonMap);
       setState(() {
@@ -340,8 +369,7 @@ class _TacticsBoardPageState extends State<TacticsBoardPage> with TickerProvider
         _redoStack.clear();
         _saveState();
       });
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Project Loaded!')));
+      _showToast('Project Loaded!');
     }
   }
 
@@ -375,10 +403,7 @@ class _TacticsBoardPageState extends State<TacticsBoardPage> with TickerProvider
         thumbnail: thumbnail,
       ));
     });
-    if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text('Keyframe ${keyframes.length} added!'), duration: const Duration(seconds: 1)),
-    );
+    _showToast('Keyframe ${keyframes.length} added!');
   }
 
   void _updateKeyframe() {
@@ -392,9 +417,7 @@ class _TacticsBoardPageState extends State<TacticsBoardPage> with TickerProvider
           keyframes[selectedKeyframeIndex!].thumbnail = thumbnail;
         });
       });
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Keyframe updated!'), duration: Duration(seconds: 1)),
-      );
+      _showToast('Keyframe updated!');
     }
   }
 
@@ -409,50 +432,52 @@ class _TacticsBoardPageState extends State<TacticsBoardPage> with TickerProvider
 
   void _playAnimation() {
     if (keyframes.length < 2 || isAnimating) return;
-    final originalState = BoardState.clone(BoardState(players: players, ball: ball, arrows: arrows, highlights: highlights, boardLayout: boardLayout));
-    int currentKeyframeIndex = 0;
-    _animationController.duration = const Duration(seconds: 2);
-    _animationController.reset();
+    
+    _savedStateBeforeAnimation = BoardState.clone(BoardState(players: players, ball: ball, arrows: arrows, highlights: highlights, boardLayout: boardLayout));
+    
+    setState(() {
+      isAnimating = true;
+      _applyBoardState(keyframes[0].boardState);
+    });
 
-    void runAnimationSegment() {
-      final startFrame = keyframes[currentKeyframeIndex];
-      final endFrame = keyframes[currentKeyframeIndex + 1];
-      final animation = Tween<double>(begin: 0.0, end: 1.0).animate(_animationController);
+    _animationController.duration = Duration(seconds: 2 * (keyframes.length - 1));
+    _animationController.forward(from: 0.0);
+  }
 
-      animation.addListener(() {
-        setState(() {
-          for (var i = 0; i < players.length; i++) {
-            final startPlayer = startFrame.boardState.players.firstWhere((p) => p.id == players[i].id, orElse: () => players[i]);
-            final endPlayer = endFrame.boardState.players.firstWhere((p) => p.id == players[i].id, orElse: () => players[i]);
-            players[i].position = Offset.lerp(startPlayer.position, endPlayer.position, animation.value)!;
-          }
-          if (ball != null && startFrame.boardState.ball != null && endFrame.boardState.ball != null) {
-            ball!.position = Offset.lerp(startFrame.boardState.ball!.position, endFrame.boardState.ball!.position, animation.value)!;
-          }
-        });
-      });
+  void _onAnimationTick() {
+    if (!isAnimating || keyframes.length < 2) return;
 
-      animation.addStatusListener((status) {
-        if (status == AnimationStatus.completed) {
-          currentKeyframeIndex++;
-          if (currentKeyframeIndex < keyframes.length - 1) {
-            _animationController.reset(); runAnimationSegment();
-          } else {
-            setState(() {
-              isAnimating = false;
-              _applyBoardState(originalState);
-            });
-          }
+    final totalSegments = keyframes.length - 1;
+    final totalProgress = _animationController.value * totalSegments;
+    int currentSegment = totalProgress.floor();
+    if (currentSegment >= totalSegments) currentSegment = totalSegments - 1;
+    final segmentProgress = totalProgress - currentSegment;
+
+    final startFrame = keyframes[currentSegment];
+    final endFrame = keyframes[currentSegment + 1];
+
+    setState(() {
+      for (var i = 0; i < players.length; i++) {
+        final startPlayer = startFrame.boardState.players.firstWhere((p) => p.id == players[i].id, orElse: () => players[i]);
+        final endPlayer = endFrame.boardState.players.firstWhere((p) => p.id == players[i].id, orElse: () => players[i]);
+        players[i].position = Offset.lerp(startPlayer.position, endPlayer.position, segmentProgress)!;
+      }
+      if (ball != null && startFrame.boardState.ball != null && endFrame.boardState.ball != null) {
+        ball!.position = Offset.lerp(startFrame.boardState.ball!.position, endFrame.boardState.ball!.position, segmentProgress)!;
+      }
+    });
+  }
+
+  void _onAnimationStatus(AnimationStatus status) {
+    if (status == AnimationStatus.completed) {
+      setState(() {
+        isAnimating = false;
+        if (_savedStateBeforeAnimation != null) {
+          _applyBoardState(_savedStateBeforeAnimation!);
+          _savedStateBeforeAnimation = null;
         }
       });
-
-      setState(() {
-        isAnimating = true;
-        _applyBoardState(startFrame.boardState);
-      });
-      _animationController.forward();
     }
-    runAnimationSegment();
   }
 
   void _stopAnimation() {
@@ -469,7 +494,10 @@ class _TacticsBoardPageState extends State<TacticsBoardPage> with TickerProvider
       isRecording = !isRecording;
       isFullscreenRecording = isRecording;
       
-      if (!isRecording) {
+      if (isRecording) {
+        enterFullscreen();
+      } else {
+        exitFullscreen();
         // Show completion message when stopping
         _showRecordingCompleteMessage();
       }
@@ -477,23 +505,7 @@ class _TacticsBoardPageState extends State<TacticsBoardPage> with TickerProvider
   }
 
   void _showRecordingCompleteMessage() {
-    if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: const Text(
-          'Recording stopped',
-          style: TextStyle(fontSize: 12),
-        ),
-        duration: const Duration(seconds: 2),
-        behavior: SnackBarBehavior.floating,
-        margin: EdgeInsets.only(
-          top: 50,
-          right: 20,
-          left: MediaQuery.of(context).size.width - 200,
-          bottom: MediaQuery.of(context).size.height - 100,
-        ),
-      ),
-    );
+    _showToast('Recording stopped');
   }
 
   Future<Uint8List?> _captureFrame({bool saveToList = false}) async {
@@ -633,73 +645,93 @@ class _TacticsBoardPageState extends State<TacticsBoardPage> with TickerProvider
   Widget build(BuildContext context) {
     // Fullscreen mode for screen recording
     if (isFullscreenRecording) {
-      return Scaffold(
-        body: GestureDetector(
-          onDoubleTap: () {
-            setState(() {
-              _showFullscreenControls = !_showFullscreenControls;
-            });
-            if (_showFullscreenControls) {
-              _controlsHideTimer?.cancel();
-              _controlsHideTimer = Timer(const Duration(seconds: 3), () {
-                if (mounted) {
-                  setState(() => _showFullscreenControls = false);
-                }
-              });
+      return CallbackShortcuts(
+        bindings: {
+          const SingleActivator(LogicalKeyboardKey.space): () {
+            if (isAnimating) {
+              _stopAnimation();
+            } else {
+              _playAnimation();
             }
+            setState(() => _showFullscreenControls = false);
+            _controlsHideTimer?.cancel();
           },
-          child: Stack(
-            children: [
-              RepaintBoundary(
-                key: _boardKey,
-                child: TacticsBoard(
-                  players: players, ball: ball, arrows: arrows, highlights: highlights,
-                  dragStart: dragStart, currentDrag: currentDrag, activeTool: Tool.none,
-                  selectedPlayer: null,
-                  layout: boardLayout,
-                  onPlayerTap: _onPlayerTap, onPlayerDragUpdate: _onPlayerDragUpdate, onBallDragUpdate: _onBallDragUpdate,
-                  onPlayerDragEnd: _onPlayerDragEnd, onBallDragEnd: _onPlayerDragEnd,
-                ),
-              ),
-              // Side controls that auto-hide
-              AnimatedPositioned(
-                duration: const Duration(milliseconds: 300),
-                right: _showFullscreenControls ? 20 : -100,
-                top: MediaQuery.of(context).size.height / 2 - 80,
-                child: IgnorePointer(
-                  ignoring: !_showFullscreenControls,
-                  child: Column(
-                    children: [
-                      // Exit fullscreen button
-                      FloatingActionButton(
-                        heroTag: 'exit',
-                        onPressed: () {
-                          setState(() => isFullscreenRecording = false);
-                          _controlsHideTimer?.cancel();
-                        },
-                        child: const Icon(Icons.fullscreen_exit),
+        },
+        child: Focus(
+          autofocus: true,
+          child: Scaffold(
+            body: GestureDetector(
+              onDoubleTap: () {
+                setState(() {
+                  _showFullscreenControls = !_showFullscreenControls;
+                });
+                if (_showFullscreenControls) {
+                  _controlsHideTimer?.cancel();
+                  _controlsHideTimer = Timer(const Duration(seconds: 3), () {
+                    if (mounted) {
+                      setState(() => _showFullscreenControls = false);
+                    }
+                  });
+                }
+              },
+              child: Stack(
+                children: [
+                  RepaintBoundary(
+                    key: _boardKey,
+                    child: IgnorePointer(
+                      ignoring: isAnimating,
+                      child: TacticsBoard(
+                        players: players, ball: ball, arrows: arrows, highlights: highlights,
+                        dragStart: dragStart, currentDrag: currentDrag, activeTool: Tool.none,
+                        selectedPlayer: null,
+                        layout: boardLayout,
+                        customPitchImage: customPitchImage,
+                        onPlayerTap: _onPlayerTap, onPlayerDragUpdate: _onPlayerDragUpdate, onBallDragUpdate: _onBallDragUpdate,
+                        onPlayerDragEnd: _onPlayerDragEnd, onBallDragEnd: _onPlayerDragEnd,
                       ),
-                      const SizedBox(height: 16),
-                      // Play/Pause button
-                      FloatingActionButton(
-                        heroTag: 'play',
-                        onPressed: () {
-                          if (isAnimating) {
-                            _stopAnimation();
-                          } else {
-                            _playAnimation();
-                          }
-                          // Hide controls immediately when play is pressed
-                          setState(() => _showFullscreenControls = false);
-                          _controlsHideTimer?.cancel();
-                        },
-                        child: Icon(isAnimating ? Icons.pause : Icons.play_arrow),
-                      ),
-                    ],
+                    ),
                   ),
-                ),
+                  // Side controls that auto-hide
+                  AnimatedPositioned(
+                    duration: const Duration(milliseconds: 300),
+                    right: _showFullscreenControls ? 20 : -100,
+                    top: MediaQuery.of(context).size.height / 2 - 80,
+                    child: IgnorePointer(
+                      ignoring: !_showFullscreenControls,
+                      child: Column(
+                        children: [
+                          // Exit fullscreen button
+                          FloatingActionButton(
+                            heroTag: 'exit',
+                            onPressed: () {
+                              setState(() => isFullscreenRecording = false);
+                              _controlsHideTimer?.cancel();
+                            },
+                            child: const Icon(Icons.fullscreen_exit),
+                          ),
+                          const SizedBox(height: 16),
+                          // Play/Pause button
+                          FloatingActionButton(
+                            heroTag: 'play',
+                            onPressed: () {
+                              if (isAnimating) {
+                                _stopAnimation();
+                              } else {
+                                _playAnimation();
+                              }
+                              // Hide controls immediately when play is pressed
+                              setState(() => _showFullscreenControls = false);
+                              _controlsHideTimer?.cancel();
+                            },
+                            child: Icon(isAnimating ? Icons.pause : Icons.play_arrow),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ],
               ),
-            ],
+            ),
           ),
         ),
       );
@@ -718,17 +750,21 @@ class _TacticsBoardPageState extends State<TacticsBoardPage> with TickerProvider
                     padding: const EdgeInsets.all(16.0),
                     child: RepaintBoundary(
                       key: _boardKey,
-                      child: GestureDetector(
-                        onPanStart: _onBoardDragStart,
-                        onPanUpdate: _onBoardDragUpdate,
-                        onPanEnd: _onBoardDragEnd,
-                        child: TacticsBoard(
-                          players: players, ball: ball, arrows: arrows, highlights: highlights,
-                          dragStart: dragStart, currentDrag: currentDrag, activeTool: activeTool,
-                          selectedPlayer: selectedPlayer,
-                          layout: boardLayout,
-                          onPlayerTap: _onPlayerTap, onPlayerDragUpdate: _onPlayerDragUpdate, onBallDragUpdate: _onBallDragUpdate,
-                          onPlayerDragEnd: _onPlayerDragEnd, onBallDragEnd: _onPlayerDragEnd,
+                      child: IgnorePointer(
+                        ignoring: isAnimating,
+                        child: GestureDetector(
+                          onPanStart: _onBoardDragStart,
+                          onPanUpdate: _onBoardDragUpdate,
+                          onPanEnd: _onBoardDragEnd,
+                          child: TacticsBoard(
+                            players: players, ball: ball, arrows: arrows, highlights: highlights,
+                            dragStart: dragStart, currentDrag: currentDrag, activeTool: activeTool,
+                            selectedPlayer: selectedPlayer,
+                            layout: boardLayout,
+                            customPitchImage: customPitchImage,
+                            onPlayerTap: _onPlayerTap, onPlayerDragUpdate: _onPlayerDragUpdate, onBallDragUpdate: _onBallDragUpdate,
+                            onPlayerDragEnd: _onPlayerDragEnd, onBallDragEnd: _onPlayerDragEnd,
+                          ),
                         ),
                       ),
                     ),
@@ -745,6 +781,7 @@ class _TacticsBoardPageState extends State<TacticsBoardPage> with TickerProvider
                   },
                   onUpdate: _updateKeyframe,
                   onDelete: _deleteKeyframe,
+                  onAdd: _addKeyframe,
                 ),
                 ControlPanel(
                   onAddPlayer: _addPlayer, onAddBall: _addBall, onAddKeyframe: _addKeyframe,
@@ -757,6 +794,7 @@ class _TacticsBoardPageState extends State<TacticsBoardPage> with TickerProvider
                   onClearDrawings: _clearDrawings,
                   onSave: _saveToFile, onLoad: _loadFromFile,
                   onToggleLayout: _toggleLayout,
+                  onPickPitchImage: _pickPitchImage,
                 ),
               ],
             ),
@@ -795,6 +833,7 @@ class TacticsBoard extends StatelessWidget {
   final Tool activeTool;
   final Player? selectedPlayer;
   final BoardLayout layout;
+  final Uint8List? customPitchImage;
   final Function(Player) onPlayerTap;
   final Function(Player, DragUpdateDetails) onPlayerDragUpdate;
   final VoidCallback onPlayerDragEnd;
@@ -805,50 +844,65 @@ class TacticsBoard extends StatelessWidget {
     super.key,
     required this.players, this.ball, required this.arrows, required this.highlights,
     this.dragStart, this.currentDrag, required this.activeTool, this.selectedPlayer,
-    required this.layout,
+    required this.layout, this.customPitchImage,
     required this.onPlayerTap, required this.onPlayerDragUpdate, required this.onPlayerDragEnd,
     required this.onBallDragUpdate, required this.onBallDragEnd,
   });
 
   @override
   Widget build(BuildContext context) {
-    return ClipRRect(
-      borderRadius: BorderRadius.circular(8),
-      child: Stack(
-        fit: StackFit.expand,
-        children: [
-          Image.asset(
-            layout == BoardLayout.full ? 'assets/football_field.jpg' : 'assets/football_half_field.jpg',
-            fit: BoxFit.fitHeight
-          ),
-          CustomPaint(
-            painter: BoardPainter(
-              arrows: arrows, highlights: highlights, dragStart: dragStart,
-              currentDrag: currentDrag, activeTool: activeTool,
-            ),
-            size: Size.infinite,
-          ),
-          ...players.map((player) => Positioned(
-            left: player.position.dx - player.radius,
-            top: player.position.dy - player.radius,
-            child: GestureDetector(
-              onTap: () => onPlayerTap(player),
-              onPanUpdate: (details) => onPlayerDragUpdate(player, details),
-              onPanEnd: (_) => onPlayerDragEnd(),
-              child: PlayerWidget(player: player, isSelected: selectedPlayer?.id == player.id),
-            ),
-          )),
-          if (ball != null)
-            Positioned(
-              left: ball!.position.dx - ball!.radius,
-              top: ball!.position.dy - ball!.radius,
-              child: GestureDetector(
-                onPanUpdate: onBallDragUpdate,
-                onPanEnd: (_) => onBallDragEnd(),
-                child: BallWidget(ball: ball!),
+    // Use a FittedBox to ensure the board scales while maintaining aspect ratio.
+    // We define a logical size for the board (e.g., 1920x1080) and all positions are relative to this.
+    // This solves the issue of players not scaling correctly in fullscreen.
+    const double logicalWidth = 1920.0;
+    const double logicalHeight = 1080.0;
+
+    return FittedBox(
+      fit: BoxFit.contain,
+      child: SizedBox(
+        width: logicalWidth,
+        height: logicalHeight,
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(8),
+          child: Stack(
+            fit: StackFit.expand,
+            children: [
+              customPitchImage != null
+                  ? Image.memory(customPitchImage!, fit: BoxFit.cover)
+                  : Image.asset(
+                      layout == BoardLayout.full ? 'assets/football_field.jpg' : 'assets/football_half_field.jpg',
+                      fit: BoxFit.cover,
+                    ),
+              CustomPaint(
+                painter: BoardPainter(
+                  arrows: arrows, highlights: highlights, dragStart: dragStart,
+                  currentDrag: currentDrag, activeTool: activeTool,
+                ),
+                size: Size.infinite,
               ),
-            ),
-        ],
+              ...players.map((player) => Positioned(
+                left: player.position.dx - player.radius,
+                top: player.position.dy - player.radius,
+                child: GestureDetector(
+                  onTap: () => onPlayerTap(player),
+                  onPanUpdate: (details) => onPlayerDragUpdate(player, details),
+                  onPanEnd: (_) => onPlayerDragEnd(),
+                  child: PlayerWidget(player: player, isSelected: selectedPlayer?.id == player.id),
+                ),
+              )),
+              if (ball != null)
+                Positioned(
+                  left: ball!.position.dx - ball!.radius,
+                  top: ball!.position.dy - ball!.radius,
+                  child: GestureDetector(
+                    onPanUpdate: onBallDragUpdate,
+                    onPanEnd: (_) => onBallDragEnd(),
+                    child: BallWidget(ball: ball!),
+                  ),
+                ),
+            ],
+          ),
+        ),
       ),
     );
   }
@@ -928,16 +982,9 @@ class BoardPainter extends CustomPainter {
 
   void _drawArrow(Canvas canvas, Offset start, Offset end, Paint paint) {
     canvas.drawLine(start, end, paint);
-    final path = Path();
     final delta = end - start;
     if (delta.distance < 5) return;
-    final angle = delta.direction;
-    const arrowSize = 15.0;
-    const arrowAngle = math.pi / 6;
-    path.moveTo(end.dx - arrowSize * math.cos(angle - arrowAngle), end.dy - arrowSize * math.sin(angle - arrowAngle));
-    path.lineTo(end.dx, end.dy);
-    path.lineTo(end.dx - arrowSize * math.cos(angle + arrowAngle), end.dy - arrowSize * math.sin(angle + arrowAngle));
-    canvas.drawPath(path, paint..style = PaintingStyle.stroke);
+    _drawArrowHead(canvas, end, delta.direction, paint);
   }
 
   void _drawCurvedArrow(Canvas canvas, Offset start, Offset end, Offset controlPoint, Paint paint) {
@@ -956,15 +1003,17 @@ class BoardPainter extends CustomPainter {
     
     final delta = end - nearEnd;
     if (delta.distance < 1) return;
-    final angle = delta.direction;
+    _drawArrowHead(canvas, end, delta.direction, paint);
+  }
+
+  void _drawArrowHead(Canvas canvas, Offset tip, double angle, Paint paint) {
     const arrowSize = 15.0;
     const arrowAngle = math.pi / 6;
-    
     final arrowPath = Path();
-    arrowPath.moveTo(end.dx - arrowSize * math.cos(angle - arrowAngle), end.dy - arrowSize * math.sin(angle - arrowAngle));
-    arrowPath.lineTo(end.dx, end.dy);
-    arrowPath.lineTo(end.dx - arrowSize * math.cos(angle + arrowAngle), end.dy - arrowSize * math.sin(angle + arrowAngle));
-    canvas.drawPath(arrowPath, paint);
+    arrowPath.moveTo(tip.dx - arrowSize * math.cos(angle - arrowAngle), tip.dy - arrowSize * math.sin(angle - arrowAngle));
+    arrowPath.lineTo(tip.dx, tip.dy);
+    arrowPath.lineTo(tip.dx - arrowSize * math.cos(angle + arrowAngle), tip.dy - arrowSize * math.sin(angle + arrowAngle));
+    canvas.drawPath(arrowPath, paint..style = PaintingStyle.stroke);
   }
 
   @override
@@ -1168,7 +1217,7 @@ class SoccerBallPainter extends CustomPainter {
 class ControlPanel extends StatelessWidget {
   final Function(Team) onAddPlayer;
   final VoidCallback onAddBall, onAddKeyframe, onPlayAnimation, onResetAll, onToggleRecording;
-  final VoidCallback onUndo, onRedo, onClearDrawings, onSave, onLoad, onToggleLayout;
+  final VoidCallback onUndo, onRedo, onClearDrawings, onSave, onLoad, onToggleLayout, onPickPitchImage;
   final Function(Tool) onToolSelected;
   final Tool activeTool;
   final bool isAnimating, isRecording, canUndo, canRedo;
@@ -1180,6 +1229,7 @@ class ControlPanel extends StatelessWidget {
     required this.activeTool, required this.isAnimating, required this.onToggleRecording, required this.isRecording,
     required this.onUndo, required this.canUndo, required this.onRedo, required this.canRedo,
     required this.onClearDrawings, required this.onSave, required this.onLoad, required this.onToggleLayout,
+    required this.onPickPitchImage,
   });
 
   @override
@@ -1200,7 +1250,7 @@ class ControlPanel extends StatelessWidget {
           _buildIconButton(context, tip: 'Add Away Player', icon: Icons.person_add, color: Colors.blue, onPressed: () => onAddPlayer(Team.away)),
           _buildIconButton(context, tip: 'Add Ball', icon: Icons.sports_soccer, color: Colors.yellow, onPressed: onAddBall),
           const VerticalDivider(),
-          _buildIconButton(context, tip: 'Add Keyframe', icon: Icons.add_to_photos, onPressed: onAddKeyframe),
+          _buildIconButton(context, tip: 'Change Pitch', icon: Icons.image, onPressed: onPickPitchImage),
           _buildIconButton(context, tip: 'Play Animation', icon: Icons.play_arrow, onPressed: isAnimating ? null : onPlayAnimation),
           const VerticalDivider(),
           _buildIconButton(context, tip: 'Draw Arrow', icon: Icons.arrow_forward, onPressed: () => onToolSelected(Tool.arrow), isActive: activeTool == Tool.arrow),
@@ -1424,6 +1474,7 @@ class KeyframeTimeline extends StatelessWidget {
   final Function(int) onKeyframeSelected;
   final VoidCallback onUpdate;
   final VoidCallback onDelete;
+  final VoidCallback onAdd;
 
   const KeyframeTimeline({
     super.key,
@@ -1432,6 +1483,7 @@ class KeyframeTimeline extends StatelessWidget {
     required this.onKeyframeSelected,
     required this.onUpdate,
     required this.onDelete,
+    required this.onAdd,
   });
 
   @override
@@ -1457,17 +1509,42 @@ class KeyframeTimeline extends StatelessWidget {
           Expanded(
             child: ListView.builder(
               scrollDirection: Axis.horizontal,
-              itemCount: keyframes.length,
+              itemCount: keyframes.length + 1, // +1 for the Add button
               itemBuilder: (context, index) {
-                final keyframe = keyframes[index];
+                if (index == 0) {
+                  return Padding(
+                    padding: const EdgeInsets.only(right: 8.0),
+                    child: AspectRatio(
+                      aspectRatio: 1,
+                      child: Material(
+                        color: Colors.green.withValues(alpha: 0.2),
+                        borderRadius: BorderRadius.circular(8),
+                        child: InkWell(
+                          onTap: onAdd,
+                          borderRadius: BorderRadius.circular(8),
+                          child: Column(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: const [
+                              Icon(Icons.add_circle, color: Colors.green, size: 32),
+                              SizedBox(height: 4),
+                              Text('Add', style: TextStyle(color: Colors.green, fontWeight: FontWeight.bold)),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ),
+                  );
+                }
+                final keyframeIndex = index - 1;
+                final keyframe = keyframes[keyframeIndex];
                 return GestureDetector(
-                  onTap: () => onKeyframeSelected(index),
+                  onTap: () => onKeyframeSelected(keyframeIndex),
                   child: Container(
                     width: 120,
                     margin: const EdgeInsets.symmetric(horizontal: 4.0),
                     decoration: BoxDecoration(
                       border: Border.all(
-                        color: selectedIndex == index ? Colors.amber : Colors.grey.shade700,
+                        color: selectedIndex == keyframeIndex ? Colors.amber : Colors.grey.shade700,
                         width: 3,
                       ),
                       borderRadius: BorderRadius.circular(4),

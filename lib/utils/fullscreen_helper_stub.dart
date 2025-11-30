@@ -1,0 +1,2 @@
+void enterFullscreenImpl() {}
+void exitFullscreenImpl() {}
