@@ -1,15 +1,17 @@
-import 'dart:html' as html;
+import 'package:web/web.dart' as web;
+import 'dart:js_interop';
 import 'dart:convert';
 import 'package:file_picker/file_picker.dart';
 
 Future<void> saveProjectImpl(String content, String fileName) async {
   final bytes = utf8.encode(content);
-  final blob = html.Blob([bytes]);
-  final url = html.Url.createObjectUrlFromBlob(blob);
-  html.AnchorElement(href: url)
-    ..setAttribute("download", fileName)
-    ..click();
-  html.Url.revokeObjectUrl(url);
+  final blob = web.Blob([bytes.toJS].toJS);
+  final url = web.URL.createObjectURL(blob);
+  final anchor = web.document.createElement('a') as web.HTMLAnchorElement;
+  anchor.href = url;
+  anchor.download = fileName;
+  anchor.click();
+  web.URL.revokeObjectURL(url);
 }
 
 Future<String?> loadProjectImpl() async {

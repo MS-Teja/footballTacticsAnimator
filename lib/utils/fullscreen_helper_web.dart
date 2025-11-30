@@ -1,9 +1,9 @@
-import 'dart:html' as html;
+import 'package:web/web.dart' as web;
 
 void enterFullscreenImpl() {
-  html.document.documentElement?.requestFullscreen();
+  web.document.documentElement?.requestFullscreen();
 }
 
 void exitFullscreenImpl() {
-  html.document.exitFullscreen();
+  web.document.exitFullscreen();
 }
