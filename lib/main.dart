@@ -1252,64 +1252,80 @@ class ControlPanel extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     const spacer = SizedBox(width: 8);
-    const groupSpacer = SizedBox(width: 16);
     const divider = SizedBox(height: 32, child: VerticalDivider(width: 1, color: Colors.white24));
 
     return Container(
-      padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 16),
+      padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 52),
       color: Theme.of(context).cardColor,
-      child: SingleChildScrollView(
-        scrollDirection: Axis.horizontal,
-        child: Row(
-          mainAxisAlignment: MainAxisAlignment.start,
-          children: [
-            _buildIconButton(context, tip: 'Save Project', icon: Icons.save, onPressed: onSave),
-            spacer,
-            _buildIconButton(context, tip: 'Load Project', icon: Icons.folder_open, onPressed: onLoad),
-            
-            groupSpacer, divider, groupSpacer,
-            
-            _buildIconButton(context, tip: 'Undo', icon: Icons.undo, onPressed: canUndo ? onUndo : null),
-            spacer,
-            _buildIconButton(context, tip: 'Redo', icon: Icons.redo, onPressed: canRedo ? onRedo : null),
-            
-            groupSpacer, divider, groupSpacer,
-            
-            _buildIconButton(context, tip: 'Add Home Player', icon: Icons.person_add, color: Colors.red, onPressed: () => onAddPlayer(Team.home)),
-            spacer,
-            _buildIconButton(context, tip: 'Add Away Player', icon: Icons.person_add, color: Colors.blue, onPressed: () => onAddPlayer(Team.away)),
-            spacer,
-            _buildIconButton(context, tip: 'Add Ball', icon: Icons.sports_soccer, color: Colors.yellow, onPressed: onAddBall),
-            
-            groupSpacer, divider, groupSpacer,
-            
-            _buildIconButton(context, tip: 'Change Pitch', icon: Icons.image, onPressed: onPickPitchImage),
-            spacer,
-            _buildIconButton(context, tip: 'Play Animation', icon: Icons.play_arrow, onPressed: isAnimating ? null : onPlayAnimation),
-            
-            groupSpacer, divider, groupSpacer,
-            
-            _buildIconButton(context, tip: 'Draw Arrow', icon: Icons.arrow_forward, onPressed: () => onToolSelected(Tool.arrow), isActive: activeTool == Tool.arrow),
-            spacer,
-            _buildIconButton(context, tip: 'Curved Arrow (Left)', icon: Icons.turn_left, onPressed: () => onToolSelected(Tool.curvedArrowLeft), isActive: activeTool == Tool.curvedArrowLeft),
-            spacer,
-            _buildIconButton(context, tip: 'Curved Arrow (Right)', icon: Icons.turn_right, onPressed: () => onToolSelected(Tool.curvedArrowRight), isActive: activeTool == Tool.curvedArrowRight),
-            spacer,
-            _buildIconButton(context, tip: 'Highlight Rectangle', icon: Icons.crop_square, onPressed: () => onToolSelected(Tool.highlightRect), isActive: activeTool == Tool.highlightRect),
-            spacer,
-            _buildIconButton(context, tip: 'Highlight Oval', icon: Icons.circle_outlined, onPressed: () => onToolSelected(Tool.highlightOval), isActive: activeTool == Tool.highlightOval),
-            
-            groupSpacer, divider, groupSpacer,
-            
-            _buildIconButton(context, tip: 'Switch Layout', icon: Icons.crop_landscape, onPressed: onToggleLayout),
-            spacer,
-            _buildIconButton(context, tip: isRecording ? 'Exit Fullscreen' : 'Fullscreen Mode', icon: isRecording ? Icons.fullscreen_exit : Icons.fullscreen, color: isRecording ? Colors.red : Colors.cyan, onPressed: onToggleRecording),
-            spacer,
-            _buildIconButton(context, tip: 'Clear Drawings', icon: Icons.layers_clear, onPressed: onClearDrawings),
-            spacer,
-            _buildIconButton(context, tip: 'Reset Board', icon: Icons.refresh, onPressed: onResetAll),
-          ],
-        ),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              _buildIconButton(context, tip: 'Save Project', icon: Icons.save, onPressed: onSave),
+              spacer,
+              _buildIconButton(context, tip: 'Load Project', icon: Icons.folder_open, onPressed: onLoad),
+            ],
+          ),
+          divider,
+          Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              _buildIconButton(context, tip: 'Undo', icon: Icons.undo, onPressed: canUndo ? onUndo : null),
+              spacer,
+              _buildIconButton(context, tip: 'Redo', icon: Icons.redo, onPressed: canRedo ? onRedo : null),
+            ],
+          ),
+          divider,
+          Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              _buildIconButton(context, tip: 'Add Home Player', icon: Icons.person_add, color: Colors.red, onPressed: () => onAddPlayer(Team.home)),
+              spacer,
+              _buildIconButton(context, tip: 'Add Away Player', icon: Icons.person_add, color: Colors.blue, onPressed: () => onAddPlayer(Team.away)),
+              spacer,
+              _buildIconButton(context, tip: 'Add Ball', icon: Icons.sports_soccer, color: Colors.yellow, onPressed: onAddBall),
+            ],
+          ),
+          divider,
+          Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              _buildIconButton(context, tip: 'Change Pitch', icon: Icons.image, onPressed: onPickPitchImage),
+              spacer,
+              _buildIconButton(context, tip: 'Play Animation', icon: Icons.play_arrow, onPressed: isAnimating ? null : onPlayAnimation),
+            ],
+          ),
+          divider,
+          Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              _buildIconButton(context, tip: 'Draw Arrow', icon: Icons.arrow_forward, onPressed: () => onToolSelected(Tool.arrow), isActive: activeTool == Tool.arrow),
+              spacer,
+              _buildIconButton(context, tip: 'Curved Arrow (Left)', icon: Icons.turn_left, onPressed: () => onToolSelected(Tool.curvedArrowLeft), isActive: activeTool == Tool.curvedArrowLeft),
+              spacer,
+              _buildIconButton(context, tip: 'Curved Arrow (Right)', icon: Icons.turn_right, onPressed: () => onToolSelected(Tool.curvedArrowRight), isActive: activeTool == Tool.curvedArrowRight),
+              spacer,
+              _buildIconButton(context, tip: 'Highlight Rectangle', icon: Icons.crop_square, onPressed: () => onToolSelected(Tool.highlightRect), isActive: activeTool == Tool.highlightRect),
+              spacer,
+              _buildIconButton(context, tip: 'Highlight Oval', icon: Icons.circle_outlined, onPressed: () => onToolSelected(Tool.highlightOval), isActive: activeTool == Tool.highlightOval),
+            ],
+          ),
+          divider,
+          Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              _buildIconButton(context, tip: 'Switch Layout', icon: Icons.crop_landscape, onPressed: onToggleLayout),
+              spacer,
+              _buildIconButton(context, tip: isRecording ? 'Exit Fullscreen' : 'Fullscreen Mode', icon: isRecording ? Icons.fullscreen_exit : Icons.fullscreen, color: isRecording ? Colors.red : Colors.cyan, onPressed: onToggleRecording),
+              spacer,
+              _buildIconButton(context, tip: 'Clear Drawings', icon: Icons.layers_clear, onPressed: onClearDrawings),
+              spacer,
+              _buildIconButton(context, tip: 'Reset Board', icon: Icons.refresh, onPressed: onResetAll),
+            ],
+          ),
+        ],
       ),
     );
   }
