@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import '../models.dart';
 import '../controller.dart';
@@ -48,17 +49,22 @@ class TopBar extends StatelessWidget {
           _IconBtn(icon: Icons.save_outlined, tip: 'Save project (⌘S)', onTap: onSave),
           _IconBtn(icon: Icons.folder_open_outlined, tip: 'Open project', onTap: onLoad),
           const SizedBox(width: 12),
-          FilledButton.icon(
-            onPressed: c.keyframes.length >= 2 ? onExport : null,
-            icon: const Icon(Icons.movie_creation_outlined, size: 18),
-            label: const Text('Export MP4'),
-            style: FilledButton.styleFrom(
-              backgroundColor: AppColors.accent,
-              foregroundColor: const Color(0xFF08130B),
-              disabledBackgroundColor: AppColors.panel2,
-              disabledForegroundColor: AppColors.tx3,
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 15),
-              textStyle: const TextStyle(fontWeight: FontWeight.w800, fontSize: 13.5),
+          // On the web, MP4 export can't run (no native encoder) — the button
+          // stays available and routes to a "get the macOS app" nudge instead.
+          Tooltip(
+            message: kIsWeb ? 'MP4 export needs the free macOS app' : 'Export an MP4 video',
+            child: FilledButton.icon(
+              onPressed: (kIsWeb || c.keyframes.length >= 2) ? onExport : null,
+              icon: Icon(kIsWeb ? Icons.desktop_mac_outlined : Icons.movie_creation_outlined, size: 18),
+              label: const Text('Export MP4'),
+              style: FilledButton.styleFrom(
+                backgroundColor: AppColors.accent,
+                foregroundColor: const Color(0xFF08130B),
+                disabledBackgroundColor: AppColors.panel2,
+                disabledForegroundColor: AppColors.tx3,
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 15),
+                textStyle: const TextStyle(fontWeight: FontWeight.w800, fontSize: 13.5),
+              ),
             ),
           ),
         ],

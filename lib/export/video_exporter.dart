@@ -9,8 +9,11 @@ import 'package:flutter/services.dart';
 class VideoExporter {
   static const MethodChannel _channel = MethodChannel('tactics/video_exporter');
 
-  /// Whether native encoding is available on this platform.
-  static bool get isSupported => defaultTargetPlatform == TargetPlatform.macOS;
+  /// Whether native encoding is available on this platform. The web build
+  /// reports the host OS via [defaultTargetPlatform] (so a Mac browser looks
+  /// like macOS), hence the explicit [kIsWeb] guard — there is no method
+  /// channel / AVFoundation in the browser.
+  static bool get isSupported => !kIsWeb && defaultTargetPlatform == TargetPlatform.macOS;
 
   Future<void> start({
     required String path,

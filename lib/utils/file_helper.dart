@@ -1,7 +1,8 @@
 import 'package:flutter/foundation.dart';
 
 import 'file_helper_stub.dart'
-    if (dart.library.io) 'file_helper_io.dart';
+    if (dart.library.io) 'file_helper_io.dart'
+    if (dart.library.js_interop) 'file_helper_web.dart';
 
 /// Save a text file, returning the chosen path (or null if cancelled).
 Future<String?> saveTextFile(String content, String fileName) =>
@@ -18,3 +19,6 @@ Future<String?> pickVideoSavePath(String fileName) => pickVideoSavePathImpl(file
 
 /// Reveal a file in Finder (macOS only; no-op elsewhere).
 Future<void> revealInFinder(String path) => revealInFinderImpl(path);
+
+/// Open a URL in the default browser / a new tab.
+Future<void> openExternal(String url) => openExternalImpl(url);

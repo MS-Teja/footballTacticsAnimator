@@ -15,6 +15,9 @@ import 'export/board_renderer.dart';
 import 'export/video_exporter.dart';
 import 'utils/file_helper.dart';
 
+/// Where web users are sent to get the full-featured desktop build.
+const String kMacAppUrl = 'https://github.com/MS-Teja/footballTacticsAnimator/releases/latest';
+
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
   runApp(const TacticsApp());
@@ -171,11 +174,13 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
 
   // ---- Video export -------------------------------------------------------
   Future<void> _exportVideo() async {
-    if (c.keyframes.length < 2) return;
+    // Native H.264 encoding (AVFoundation) can't run in the browser, so on the
+    // web — and any non-macOS build — we point users to the desktop app.
     if (!VideoExporter.isSupported) {
-      _toast('Video export is only available on macOS');
+      _showGetMacApp();
       return;
     }
+    if (c.keyframes.length < 2) return;
     final settings = await showDialog<_ExportSettings>(context: context, builder: (_) => const _ExportDialog());
     if (settings == null) return;
     final path = await pickVideoSavePath('${c.projectName}.mp4');
@@ -225,6 +230,40 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
     cancelled ? _toast('Export cancelled') : _showExportComplete(path);
   }
 
+  /// Shown when a browser (or non-macOS) user asks for something the web build
+  /// can't do — currently MP4 export. Nudges them to the full desktop app.
+  void _showGetMacApp() {
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: AppColors.panel2,
+        icon: const Icon(Icons.desktop_mac_outlined, color: AppColors.accent, size: 40),
+        title: const Text('Get the macOS app'),
+        content: const SizedBox(
+          width: 360,
+          child: Text(
+            'Video export renders a native H.264 MP4, which the browser can’t do. '
+            'Everything else — building plays, keyframes, animation and playback — '
+            'works right here. For MP4 export, download the free macOS app.',
+            style: TextStyle(color: AppColors.tx2, height: 1.4),
+          ),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Not now')),
+          FilledButton.icon(
+            style: FilledButton.styleFrom(backgroundColor: AppColors.accent, foregroundColor: const Color(0xFF08130B)),
+            icon: const Icon(Icons.download),
+            label: const Text('Download for macOS'),
+            onPressed: () {
+              openExternal(kMacAppUrl);
+              Navigator.pop(ctx);
+            },
+          ),
+        ],
+      ),
+    );
+  }
+
   void _showExportComplete(String path) {
     showDialog(
       context: context,
@@ -267,7 +306,9 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
 
   KeyEventResult _onKey(FocusNode node, KeyEvent event) {
     if (event is! KeyDownEvent) return KeyEventResult.ignored;
-    final meta = HardwareKeyboard.instance.isMetaPressed;
+    // Accept Ctrl as well as ⌘ so the shortcuts also work for web users on
+    // Windows/Linux.
+    final meta = HardwareKeyboard.instance.isMetaPressed || HardwareKeyboard.instance.isControlPressed;
     final shift = HardwareKeyboard.instance.isShiftPressed;
     if (meta && event.logicalKey == LogicalKeyboardKey.keyZ) {
       shift ? c.redo() : c.undo();

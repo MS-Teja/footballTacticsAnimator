@@ -5,3 +5,4 @@ Future<String?> loadTextFileImpl() async => null;
 Future<Uint8List?> pickImageBytesImpl() async => null;
 Future<String?> pickVideoSavePathImpl(String fileName) async => null;
 Future<void> revealInFinderImpl(String path) async {}
+Future<void> openExternalImpl(String url) async {}
