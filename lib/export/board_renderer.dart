@@ -58,6 +58,7 @@ class BoardRenderer {
     double reveal = 1.0,
     double flowPhase = 0.0,
     bool trails = false,
+    bool showNames = true,
   }) async {
     final ball = state.ball != null ? await _ballImage() : null;
     final photos = <String, ui.Image>{};
@@ -79,6 +80,7 @@ class BoardRenderer {
       reveal: reveal,
       flowPhase: flowPhase,
       trails: trails,
+      showNames: showNames,
     );
     try {
       return await picture.toImage(width, height);
@@ -102,6 +104,7 @@ class BoardRenderer {
     double reveal = 1.0,
     double flowPhase = 0.0,
     bool trails = false,
+    bool showNames = true,
   }) {
     final recorder = ui.PictureRecorder();
     final canvas = Canvas(recorder);
@@ -132,8 +135,65 @@ class BoardRenderer {
       _drawPlayer(canvas, geo, p, showNumbers, photos[p.id]);
     }
     if (state.ball != null) _drawBall(canvas, geo, state.ball!, ball);
+    // Name labels on top of the discs/ball.
+    if (showNames) {
+      for (final p in state.players) {
+        if (p.label.trim().isNotEmpty) _drawNameplate(canvas, geo, p);
+      }
+    }
 
     return recorder.endRecording();
+  }
+
+  /// Draws a player's name label — matching [NameLabel] on the live board — with
+  /// an optional filled plate and drop shadow, honouring the transient opacity.
+  static void _drawNameplate(Canvas canvas, PitchGeometry geo, Player p) {
+    final s = p.nameStyle;
+    final center = geo.toScreen(p.position);
+    final r = geo.metres(p.size);
+    final gap = geo.metres(0.7);
+    final fontPx = geo.metres(s.size);
+    final op = (p.opacity * p.labelOpacity).clamp(0.0, 1.0);
+
+    final tp = TextPainter(
+      text: TextSpan(
+        text: p.label.trim(),
+        style: TextStyle(
+          color: s.textColor.withValues(alpha: s.textColor.a * op),
+          fontSize: fontPx,
+          fontWeight: s.weight.fontWeight,
+          height: 1.0,
+          letterSpacing: 0.2,
+          shadows: s.shadow
+              ? [Shadow(color: Colors.black.withValues(alpha: 0.75 * op), blurRadius: fontPx * 0.28, offset: Offset(0, fontPx * 0.09))]
+              : null,
+        ),
+      ),
+      textDirection: TextDirection.ltr,
+    )..layout();
+
+    final padH = s.bgColor != null ? fontPx * 0.45 : 0.0;
+    final padV = s.bgColor != null ? fontPx * 0.22 : 0.0;
+    final boxW = tp.width + padH * 2;
+    final boxH = tp.height + padV * 2;
+
+    final Offset topLeft = switch (s.pos) {
+      LabelPos.below => Offset(center.dx - boxW / 2, center.dy + r + gap),
+      LabelPos.above => Offset(center.dx - boxW / 2, center.dy - r - gap - boxH),
+      LabelPos.right => Offset(center.dx + r + gap, center.dy - boxH / 2),
+      LabelPos.left => Offset(center.dx - r - gap - boxW, center.dy - boxH / 2),
+    };
+
+    if (s.bgColor != null) {
+      final rect = RRect.fromRectAndRadius(
+          Rect.fromLTWH(topLeft.dx, topLeft.dy, boxW, boxH), Radius.circular(fontPx * 0.32));
+      canvas.drawRRect(rect, Paint()..color = s.bgColor!.withValues(alpha: s.bgColor!.a * op));
+      canvas.drawRRect(rect, Paint()
+        ..color = Colors.black.withValues(alpha: 0.25 * op)
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 0.5);
+    }
+    tp.paint(canvas, Offset(topLeft.dx + padH, topLeft.dy + padV));
   }
 
   static void _drawPlayer(Canvas canvas, PitchGeometry geo, Player p, bool showNumbers, ui.Image? photo) {

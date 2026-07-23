@@ -14,8 +14,12 @@ and **exporting them as real MP4 video** — built for coaches, analysts and con
 - Positions are stored in real pitch metres, so toggles and export are always consistent.
 
 ### Players & ball
-- **Numbered-disc tokens**, fully customizable: number/name, size, primary/secondary/text colors, or a photo.
-- **"Show numbers" toggle** for plain colored discs.
+- **Numbered-disc tokens**, fully customizable: number/disc text, size, primary/secondary/text colors, or a photo.
+- **Name labels (nameplates)** — a separate name shown beside the disc, so a player can carry both a
+  number *and* a name. Full text control: font size, weight, text + background color (or no plate),
+  position (below / above / left / right) and a shadow toggle — with one-click **"apply to all players."**
+  Names animate in/out as they're added or removed across keyframes.
+- **"Show numbers" / "Names" toggles** in the stage controls.
 - **Formation presets** per team (4-4-2, 4-3-3, 4-2-3-1, 3-5-2, 4-1-4-1).
 - Draggable ball (flat image).
 
@@ -45,10 +49,13 @@ and **exporting them as real MP4 video** — built for coaches, analysts and con
 - "Reveal in Finder" when done.
 
 ### Project & workflow
+- **Autosave** — the whole project (board, names & styles, keyframes, view settings) is saved
+  automatically and **restored on next launch**, so your work survives a restart. Stored in the app
+  support directory on desktop and `localStorage` on the web.
 - Save / open projects as `.json` (board, keyframes and view settings).
 - Undo / redo, and keyboard shortcuts: `Space` play/pause, `⌘Z` / `⌘⇧Z` undo/redo,
   `⌘S` save, `⌘D` duplicate, `⌘C` / `⌘V` copy/paste, arrow keys nudge (`⇧` = larger),
-  `⌘+` / `⌘-` / `⌘0` zoom, `Delete` remove selection, `Esc` deselect.
+  `⌘+` / `⌘-` / `⌘0` zoom, `Delete` remove selection, `Esc` deselect. (Ctrl works too, for web on Windows/Linux.)
 
 ## Getting started
 
@@ -60,17 +67,26 @@ flutter run -d macos
 Requires the Flutter SDK and Xcode. Saving files/video uses the macOS App Sandbox
 "user-selected file" access, which is already configured in the entitlements.
 
+### Web
+
+A browser build is hosted on GitHub Pages: **https://ms-teja.github.io/footballTacticsAnimator/**.
+Everything works in the browser except **MP4 export**, which needs native encoding — the web app
+points you to the macOS download for that. Build it with
+`flutter build web --release --base-href /footballTacticsAnimator/`.
+
 ## Project structure
 
 ```
 lib/
   models.dart                 # data models (metre-space) + formations
-  controller.dart             # app state, undo/redo, keyframes, animation engine
+  controller.dart             # app state, undo/redo, keyframes, animation engine, autosave
   export/video_exporter.dart  # Dart side of the native MP4 encoder
   export/board_renderer.dart  # pure-canvas frame renderer (thumbnails + export frames)
+  utils/file_helper*.dart     # save/open/pick files (native + web implementations)
+  utils/persistence*.dart     # autosave storage (app-support file on desktop, localStorage on web)
   widgets/
     pitch.dart                # PitchGeometry (metre<->screen) + procedural PitchPainter
-    tactics_board.dart        # interactive board, tokens, ball, animated drawings, trails
+    tactics_board.dart        # interactive board, tokens, ball, name labels, animated drawings, trails
     chrome.dart               # top bar + left tool rail
     inspector.dart            # context inspector (player/ball/arrow/zone/team)
     timeline.dart             # transport + keyframe strip

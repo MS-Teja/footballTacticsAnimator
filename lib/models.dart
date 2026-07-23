@@ -39,6 +39,83 @@ extension ArrowAnimX on ArrowAnim {
       };
 }
 
+/// Where a player's name label sits relative to the disc.
+enum LabelPos { below, above, left, right }
+
+extension LabelPosX on LabelPos {
+  String get label => switch (this) {
+        LabelPos.below => 'Below',
+        LabelPos.above => 'Above',
+        LabelPos.left => 'Left',
+        LabelPos.right => 'Right',
+      };
+}
+
+/// Font weight choices for the name label (kept as a small enum so it
+/// serializes cleanly and drives a segmented control).
+enum LabelWeight { normal, medium, bold }
+
+extension LabelWeightX on LabelWeight {
+  FontWeight get fontWeight => switch (this) {
+        LabelWeight.normal => FontWeight.w500,
+        LabelWeight.medium => FontWeight.w700,
+        LabelWeight.bold => FontWeight.w900,
+      };
+
+  String get label => switch (this) {
+        LabelWeight.normal => 'Normal',
+        LabelWeight.medium => 'Medium',
+        LabelWeight.bold => 'Bold',
+      };
+}
+
+/// Full styling for a player's name label (the nameplate under/around the
+/// disc). [size] is in pitch metres so it scales with the board and export.
+/// A null [bgColor] means no filled plate (text only).
+class NameStyle {
+  double size; // text height in metres
+  LabelWeight weight;
+  Color textColor;
+  Color? bgColor;
+  LabelPos pos;
+  bool shadow;
+
+  NameStyle({
+    this.size = 1.8,
+    this.weight = LabelWeight.medium,
+    this.textColor = Colors.white,
+    this.bgColor = const Color(0xE6141A20),
+    this.pos = LabelPos.below,
+    this.shadow = true,
+  });
+
+  NameStyle.clone(NameStyle o)
+      : size = o.size,
+        weight = o.weight,
+        textColor = o.textColor,
+        bgColor = o.bgColor,
+        pos = o.pos,
+        shadow = o.shadow;
+
+  Map<String, dynamic> toJson() => {
+        'size': size,
+        'weight': weight.index,
+        'textColor': _colorToJson(textColor),
+        'bgColor': bgColor != null ? _colorToJson(bgColor!) : null,
+        'pos': pos.index,
+        'shadow': shadow,
+      };
+
+  factory NameStyle.fromJson(Map<String, dynamic> json) => NameStyle(
+        size: (json['size'] as num?)?.toDouble() ?? 1.8,
+        weight: json['weight'] != null ? LabelWeight.values[json['weight']] : LabelWeight.medium,
+        textColor: json['textColor'] != null ? _colorFromJson(json['textColor']) : Colors.white,
+        bgColor: json['bgColor'] != null ? _colorFromJson(json['bgColor']) : null,
+        pos: json['pos'] != null ? LabelPos.values[json['pos']] : LabelPos.below,
+        shadow: json['shadow'] ?? true,
+      );
+}
+
 enum Team { home, away }
 
 enum BoardLayout { full, half }
@@ -84,6 +161,7 @@ double _d(dynamic v) => (v as num).toDouble();
 class Player {
   String id;
   String name;
+  String label; // display name shown on the nameplate (separate from the disc number)
   Offset position; // (l, w) in metres
   Color color;
   Color? color2;
@@ -91,10 +169,16 @@ class Player {
   double size; // token radius in metres
   Uint8List? imageData;
   Team team;
+  NameStyle nameStyle;
 
   /// Transient render opacity (0..1), only set during interpolation so players
   /// fade in/out when they appear/disappear between keyframes. Not serialized.
   double opacity;
+
+  /// Transient opacity (0..1) for the name label alone, set during interpolation
+  /// so a label added/removed between keyframes fades in/out independently of
+  /// the disc. Not serialized.
+  double labelOpacity;
 
   /// Transient segment-start position, set during interpolation to draw a
   /// motion trail behind a moving player. Null when idle. Not serialized.
@@ -102,6 +186,7 @@ class Player {
 
   Player({
     required this.name,
+    this.label = '',
     required this.position,
     required this.color,
     this.color2,
@@ -110,12 +195,16 @@ class Player {
     this.imageData,
     required this.team,
     this.opacity = 1.0,
+    this.labelOpacity = 1.0,
+    NameStyle? nameStyle,
     String? id,
-  }) : id = id ?? UniqueKey().toString();
+  })  : nameStyle = nameStyle ?? NameStyle(),
+        id = id ?? UniqueKey().toString();
 
   Player.clone(Player o)
       : id = o.id,
         name = o.name,
+        label = o.label,
         position = o.position,
         color = o.color,
         color2 = o.color2,
@@ -123,11 +212,14 @@ class Player {
         size = o.size,
         imageData = o.imageData,
         team = o.team,
-        opacity = o.opacity;
+        nameStyle = NameStyle.clone(o.nameStyle),
+        opacity = o.opacity,
+        labelOpacity = o.labelOpacity;
 
   Map<String, dynamic> toJson() => {
         'id': id,
         'name': name,
+        'label': label,
         'l': position.dx,
         'w': position.dy,
         'color': _colorToJson(color),
@@ -136,11 +228,13 @@ class Player {
         'size': size,
         'imageData': imageData != null ? base64Encode(imageData!) : null,
         'team': team.index,
+        'nameStyle': nameStyle.toJson(),
       };
 
   factory Player.fromJson(Map<String, dynamic> json) => Player(
         id: json['id'],
         name: json['name'],
+        label: json['label'] ?? '',
         position: Offset(_d(json['l']), _d(json['w'])),
         color: _colorFromJson(json['color']),
         color2: json['color2'] != null ? _colorFromJson(json['color2']) : null,
@@ -148,6 +242,7 @@ class Player {
         size: _d(json['size']),
         imageData: json['imageData'] != null ? base64Decode(json['imageData']) : null,
         team: Team.values[json['team']],
+        nameStyle: json['nameStyle'] != null ? NameStyle.fromJson(json['nameStyle']) : null,
       );
 }
 

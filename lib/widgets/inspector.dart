@@ -92,7 +92,7 @@ Widget _swatchRow(BuildContext context, String label, Color color, VoidCallback 
   );
 }
 
-void _pickColor(BuildContext context, Color initial, ValueChanged<Color> onChanged) {
+void _pickColor(BuildContext context, Color initial, ValueChanged<Color> onChanged, {VoidCallback? onClose}) {
   showDialog(
     context: context,
     builder: (ctx) => AlertDialog(
@@ -108,7 +108,15 @@ void _pickColor(BuildContext context, Color initial, ValueChanged<Color> onChang
           hexInputBar: true,
         ),
       ),
-      actions: [FilledButton(onPressed: () => Navigator.pop(ctx), child: const Text('Done'))],
+      actions: [
+        FilledButton(
+          onPressed: () {
+            Navigator.pop(ctx);
+            onClose?.call();
+          },
+          child: const Text('Done'),
+        )
+      ],
     ),
   );
 }
@@ -140,22 +148,28 @@ class _PlayerEditor extends StatefulWidget {
 
 class _PlayerEditorState extends State<_PlayerEditor> {
   late final TextEditingController _name;
+  late final TextEditingController _labelC;
 
   @override
   void initState() {
     super.initState();
     _name = TextEditingController(text: widget.player.name);
+    _labelC = TextEditingController(text: widget.player.label);
   }
 
   @override
   void didUpdateWidget(covariant _PlayerEditor old) {
     super.didUpdateWidget(old);
-    if (old.player.id != widget.player.id) _name.text = widget.player.name;
+    if (old.player.id != widget.player.id) {
+      _name.text = widget.player.name;
+      _labelC.text = widget.player.label;
+    }
   }
 
   @override
   void dispose() {
     _name.dispose();
+    _labelC.dispose();
     super.dispose();
   }
 
@@ -166,7 +180,7 @@ class _PlayerEditorState extends State<_PlayerEditor> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        _label('Number / name'),
+        _label('Number / disc text'),
         TextField(
           controller: _name,
           onChanged: (v) {
@@ -190,11 +204,11 @@ class _PlayerEditorState extends State<_PlayerEditor> {
         _swatchRow(context, 'Primary', p.color, () => _pickColor(context, p.color, (col) {
               p.color = col;
               c.refresh();
-            })),
+            }, onClose: c.commit)),
         _swatchRow(context, 'Secondary', p.color2 ?? Colors.transparent, () => _pickColor(context, p.color2 ?? Colors.white, (col) {
               p.color2 = col;
               c.refresh();
-            }), isNull: p.color2 == null),
+            }, onClose: c.commit), isNull: p.color2 == null),
         if (p.color2 != null)
           Align(
             alignment: Alignment.centerRight,
@@ -207,10 +221,28 @@ class _PlayerEditorState extends State<_PlayerEditor> {
               label: const Text('Remove secondary'),
             ),
           ),
-        _swatchRow(context, 'Text', p.textColor, () => _pickColor(context, p.textColor, (col) {
+        _swatchRow(context, 'Disc text', p.textColor, () => _pickColor(context, p.textColor, (col) {
               p.textColor = col;
               c.refresh();
-            })),
+            }, onClose: c.commit)),
+
+        // ---- Name label -----------------------------------------------------
+        const Padding(
+          padding: EdgeInsets.only(top: 18, bottom: 2),
+          child: Divider(color: AppColors.line, height: 1),
+        ),
+        _label('Name label'),
+        TextField(
+          controller: _labelC,
+          decoration: const InputDecoration(hintText: 'e.g. Messi (leave blank to hide)'),
+          onChanged: (v) {
+            p.label = v;
+            c.refresh();
+          },
+          onSubmitted: (_) => c.commit(),
+        ),
+        _NameStyleControls(c: c, player: p),
+
         _label('Photo'),
         Row(
           children: [
@@ -254,6 +286,131 @@ class _PlayerEditorState extends State<_PlayerEditor> {
         ),
         const SizedBox(height: 8),
         _dangerButton('Delete player', c.removeSelected),
+      ],
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Name-label styling (font, colors, position, shadow) + apply-to-all
+// ---------------------------------------------------------------------------
+class _NameStyleControls extends StatelessWidget {
+  final TacticsController c;
+  final Player player;
+  const _NameStyleControls({required this.c, required this.player});
+
+  @override
+  Widget build(BuildContext context) {
+    final ns = player.nameStyle;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        _label('Text size'),
+        Slider(
+          value: ns.size.clamp(1.0, 3.6),
+          min: 1.0,
+          max: 3.6,
+          onChanged: (v) {
+            ns.size = v;
+            c.refresh();
+          },
+          onChangeEnd: (_) => c.commit(),
+        ),
+        _label('Weight'),
+        SizedBox(
+          width: double.infinity,
+          child: SegmentedButton<LabelWeight>(
+            segments: const [
+              ButtonSegment(value: LabelWeight.normal, label: Text('Normal')),
+              ButtonSegment(value: LabelWeight.medium, label: Text('Medium')),
+              ButtonSegment(value: LabelWeight.bold, label: Text('Bold')),
+            ],
+            selected: {ns.weight},
+            showSelectedIcon: false,
+            style: const ButtonStyle(visualDensity: VisualDensity.compact),
+            onSelectionChanged: (s) {
+              ns.weight = s.first;
+              c.commit();
+            },
+          ),
+        ),
+        _label('Position'),
+        SizedBox(
+          width: double.infinity,
+          child: SegmentedButton<LabelPos>(
+            segments: const [
+              ButtonSegment(value: LabelPos.below, icon: Icon(Icons.keyboard_arrow_down), tooltip: 'Below'),
+              ButtonSegment(value: LabelPos.above, icon: Icon(Icons.keyboard_arrow_up), tooltip: 'Above'),
+              ButtonSegment(value: LabelPos.left, icon: Icon(Icons.keyboard_arrow_left), tooltip: 'Left'),
+              ButtonSegment(value: LabelPos.right, icon: Icon(Icons.keyboard_arrow_right), tooltip: 'Right'),
+            ],
+            selected: {ns.pos},
+            showSelectedIcon: false,
+            style: const ButtonStyle(visualDensity: VisualDensity.compact),
+            onSelectionChanged: (s) {
+              ns.pos = s.first;
+              c.commit();
+            },
+          ),
+        ),
+        _label('Colors'),
+        _swatchRow(context, 'Text', ns.textColor, () => _pickColor(context, ns.textColor, (col) {
+              ns.textColor = col;
+              c.refresh();
+            }, onClose: c.commit)),
+        _swatchRow(context, 'Background', ns.bgColor ?? Colors.transparent, () => _pickColor(context, ns.bgColor ?? AppColors.panel, (col) {
+              ns.bgColor = col;
+              c.refresh();
+            }, onClose: c.commit), isNull: ns.bgColor == null),
+        if (ns.bgColor != null)
+          Align(
+            alignment: Alignment.centerRight,
+            child: TextButton.icon(
+              onPressed: () {
+                ns.bgColor = null;
+                c.commit();
+              },
+              icon: const Icon(Icons.close, size: 15),
+              label: const Text('No plate'),
+            ),
+          ),
+        _label('Shadow'),
+        SizedBox(
+          width: double.infinity,
+          child: SegmentedButton<bool>(
+            segments: const [
+              ButtonSegment(value: true, label: Text('Shadow')),
+              ButtonSegment(value: false, label: Text('No shadow')),
+            ],
+            selected: {ns.shadow},
+            showSelectedIcon: false,
+            style: const ButtonStyle(visualDensity: VisualDensity.compact),
+            onSelectionChanged: (s) {
+              ns.shadow = s.first;
+              c.commit();
+            },
+          ),
+        ),
+        const SizedBox(height: 10),
+        SizedBox(
+          width: double.infinity,
+          child: OutlinedButton.icon(
+            icon: const Icon(Icons.format_paint_outlined, size: 17),
+            label: const Text('Apply text style to all players'),
+            style: OutlinedButton.styleFrom(side: const BorderSide(color: AppColors.line2), foregroundColor: AppColors.tx2),
+            onPressed: () {
+              c.applyNameStyleToAll(player);
+              ScaffoldMessenger.of(context)
+                ..clearSnackBars()
+                ..showSnackBar(const SnackBar(
+                  content: Text('Applied name style to all players'),
+                  behavior: SnackBarBehavior.floating,
+                  width: 320,
+                  duration: Duration(seconds: 2),
+                ));
+            },
+          ),
+        ),
       ],
     );
   }

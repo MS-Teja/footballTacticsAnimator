@@ -71,6 +71,8 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
     super.initState();
     c = TacticsController(vsync: this);
     c.addListener(_changed);
+    // Restore the last session (if any) and arm autosave.
+    c.initPersistence();
   }
 
   void _changed() => setState(() {});
@@ -95,6 +97,7 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
       reveal: reveal,
       flowPhase: flowPhase,
       trails: c.showTrails,
+      showNames: c.showNames,
     );
   }
 
@@ -126,20 +129,8 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
 
   // ---- Save / Load --------------------------------------------------------
   Future<void> _save() async {
-    final map = {
-      'version': 3,
-      'name': c.projectName,
-      'document': BoardState(players: c.players, ball: c.ball, arrows: c.arrows, highlights: c.highlights).toJson(),
-      'keyframes': c.keyframes.map((k) => k.toJson()).toList(),
-      'view': {
-        'orientation': c.orientation.index,
-        'layout': c.layout.index,
-        'showNumbers': c.showNumbers,
-        'showTrails': c.showTrails,
-      },
-    };
     final safe = c.projectName.replaceAll(RegExp(r'[^A-Za-z0-9 _-]'), '').trim();
-    final path = await saveTextFile(jsonEncode(map), '${safe.isEmpty ? 'tactics_project' : safe}.json');
+    final path = await saveTextFile(jsonEncode(c.toProjectJson()), '${safe.isEmpty ? 'tactics_project' : safe}.json');
     if (path != null) _toast('Saved');
   }
 
@@ -147,24 +138,7 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
     final str = await loadTextFile();
     if (str == null) return;
     try {
-      final map = jsonDecode(str) as Map<String, dynamic>;
-      if (map.containsKey('document')) {
-        c.loadDocument(BoardState.fromJson(map['document']));
-        if (map['keyframes'] != null) {
-          c.loadKeyframes((map['keyframes'] as List).map((k) => Keyframe.fromJson(k)).toList());
-        }
-        final view = map['view'] as Map<String, dynamic>?;
-        if (view != null) {
-          c.orientation = BoardOrientation.values[view['orientation'] ?? 0];
-          c.layout = BoardLayout.values[view['layout'] ?? 0];
-          c.showNumbers = view['showNumbers'] ?? true;
-          c.showTrails = view['showTrails'] ?? false;
-        }
-        if (map['name'] != null) c.setProjectName(map['name']);
-        c.refresh();
-      } else {
-        c.loadDocument(BoardState.fromJson(map));
-      }
+      c.loadProjectJson(jsonDecode(str) as Map<String, dynamic>);
       _toast('Loaded');
     } catch (e) {
       _toast('Could not load project');

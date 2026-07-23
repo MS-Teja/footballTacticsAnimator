@@ -180,6 +180,10 @@ class _TacticsBoardState extends State<TacticsBoard> with SingleTickerProviderSt
         if (s.ball != null)
           _positioned(geo, s.ball!.position, geo.metres(s.ball!.size),
               child: _ballWidget(geo, s.ball!, interactive)),
+        // Name labels sit above the tokens and never intercept pointer events.
+        if (c.showNames)
+          for (final p in s.players)
+            if (p.label.trim().isNotEmpty) _nameplate(geo, p),
       ],
     );
 
@@ -248,6 +252,73 @@ class _TacticsBoardState extends State<TacticsBoard> with SingleTickerProviderSt
       onPanUpdate: (d) => c.moveBallTo(geo.toMetres(geo.toScreen(ball.position) + d.delta)),
       onPanEnd: (_) => c.endDrag(),
       child: w,
+    );
+  }
+
+  /// A name label anchored to the disc. The anchor point + [FractionalTranslation]
+  /// keep the plate centred on the disc edge for the chosen side, regardless of
+  /// the label's own width, and it moves with the player during animation.
+  Widget _nameplate(PitchGeometry geo, Player p) {
+    final center = geo.toScreen(p.position);
+    final r = geo.metres(p.size);
+    final gap = geo.metres(0.7);
+    final (Offset anchor, Offset frac) = switch (p.nameStyle.pos) {
+      LabelPos.below => (Offset(center.dx, center.dy + r + gap), const Offset(-0.5, 0)),
+      LabelPos.above => (Offset(center.dx, center.dy - r - gap), const Offset(-0.5, -1)),
+      LabelPos.right => (Offset(center.dx + r + gap, center.dy), const Offset(0, -0.5)),
+      LabelPos.left => (Offset(center.dx - r - gap, center.dy), const Offset(-1, -0.5)),
+    };
+    return Positioned(
+      left: anchor.dx,
+      top: anchor.dy,
+      child: FractionalTranslation(
+        translation: frac,
+        child: IgnorePointer(
+          child: Opacity(
+            opacity: (p.opacity * p.labelOpacity).clamp(0.0, 1.0),
+            child: NameLabel(text: p.label.trim(), style: p.nameStyle, fontPx: geo.metres(p.nameStyle.size)),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// The visual nameplate — text with an optional filled plate and drop shadow.
+/// Shared look with the export renderer ([BoardRenderer]).
+class NameLabel extends StatelessWidget {
+  final String text;
+  final NameStyle style;
+  final double fontPx;
+  const NameLabel({super.key, required this.text, required this.style, required this.fontPx});
+
+  @override
+  Widget build(BuildContext context) {
+    final txt = Text(
+      text,
+      maxLines: 1,
+      softWrap: false,
+      overflow: TextOverflow.visible,
+      style: TextStyle(
+        color: style.textColor,
+        fontSize: fontPx,
+        fontWeight: style.weight.fontWeight,
+        height: 1.0,
+        letterSpacing: 0.2,
+        shadows: style.shadow
+            ? [Shadow(color: Colors.black.withValues(alpha: 0.75), blurRadius: fontPx * 0.28, offset: Offset(0, fontPx * 0.09))]
+            : null,
+      ),
+    );
+    if (style.bgColor == null) return txt;
+    return Container(
+      padding: EdgeInsets.symmetric(horizontal: fontPx * 0.45, vertical: fontPx * 0.22),
+      decoration: BoxDecoration(
+        color: style.bgColor,
+        borderRadius: BorderRadius.circular(fontPx * 0.32),
+        border: Border.all(color: Colors.black.withValues(alpha: 0.25), width: 0.5),
+      ),
+      child: txt,
     );
   }
 }

@@ -1,6 +1,9 @@
+import 'dart:async';
+import 'dart:convert';
 import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'models.dart';
+import 'utils/persistence.dart';
 
 /// Central application state (a [ChangeNotifier]). Holds the editable document,
 /// keyframe sequence, undo/redo history and the live playback engine. All
@@ -26,6 +29,7 @@ class TacticsController extends ChangeNotifier {
   BoardLayout layout = BoardLayout.full;
   BoardOrientation orientation = BoardOrientation.horizontal;
   bool showNumbers = true;
+  bool showNames = true; // name labels (nameplates) under the discs
   bool showTrails = false; // motion trails behind movers (off by default)
 
   int _homeCount = 0;
@@ -105,8 +109,97 @@ class TacticsController extends ChangeNotifier {
 
   @override
   void dispose() {
+    _autosaveTimer?.cancel();
     _anim.dispose();
     super.dispose();
+  }
+
+  // =========================================================================
+  // Persistence (autosave the whole project so work survives a restart)
+  // =========================================================================
+  Timer? _autosaveTimer;
+  bool _autosaveEnabled = false;
+
+  /// Serializes the entire project (document, keyframes and view settings) —
+  /// the same shape used by manual Save. [includeThumbnails] can be dropped to
+  /// shrink the payload (used as a web localStorage-quota fallback).
+  Map<String, dynamic> toProjectJson({bool includeThumbnails = true}) => {
+        'version': 3,
+        'name': projectName,
+        'document': BoardState(players: players, ball: ball, arrows: arrows, highlights: highlights).toJson(),
+        'keyframes': keyframes.map((k) {
+          final m = k.toJson();
+          if (!includeThumbnails) m['thumbnail'] = null;
+          return m;
+        }).toList(),
+        'view': {
+          'orientation': orientation.index,
+          'layout': layout.index,
+          'showNumbers': showNumbers,
+          'showNames': showNames,
+          'showTrails': showTrails,
+        },
+      };
+
+  /// Loads a project map (versioned format, or a bare [BoardState] for legacy
+  /// files) into the live state.
+  void loadProjectJson(Map<String, dynamic> map) {
+    if (map.containsKey('document')) {
+      loadDocument(BoardState.fromJson(map['document']));
+      if (map['keyframes'] != null) {
+        loadKeyframes((map['keyframes'] as List).map((k) => Keyframe.fromJson(k)).toList());
+      }
+      final view = map['view'] as Map<String, dynamic>?;
+      if (view != null) {
+        orientation = BoardOrientation.values[view['orientation'] ?? 0];
+        layout = BoardLayout.values[view['layout'] ?? 0];
+        showNumbers = view['showNumbers'] ?? true;
+        showNames = view['showNames'] ?? true;
+        showTrails = view['showTrails'] ?? false;
+      }
+      if (map['name'] != null) setProjectName(map['name']);
+    } else {
+      loadDocument(BoardState.fromJson(map));
+    }
+    notifyListeners();
+  }
+
+  /// Restores the last autosaved project (if any) on launch, then arms autosave.
+  Future<void> initPersistence() async {
+    try {
+      final saved = await readPersisted();
+      if (saved != null && saved.trim().isNotEmpty) {
+        loadProjectJson(jsonDecode(saved) as Map<String, dynamic>);
+      }
+    } catch (_) {
+      // Corrupt/absent autosave — start fresh rather than fail to launch.
+    }
+    _autosaveEnabled = true;
+  }
+
+  /// Every edit funnels through [notifyListeners]; debounce a persistent write
+  /// off it, but skip while previewing/playing (nothing structural changes then).
+  void _scheduleAutosave() {
+    if (!_autosaveEnabled || isPlaying || _preview != null) return;
+    _autosaveTimer?.cancel();
+    _autosaveTimer = Timer(const Duration(milliseconds: 900), _writeAutosave);
+  }
+
+  Future<void> _writeAutosave() async {
+    try {
+      await writePersisted(jsonEncode(toProjectJson()));
+    } catch (_) {
+      // e.g. web localStorage quota — retry without the heavy thumbnails.
+      try {
+        await writePersisted(jsonEncode(toProjectJson(includeThumbnails: false)));
+      } catch (_) {}
+    }
+  }
+
+  @override
+  void notifyListeners() {
+    super.notifyListeners();
+    _scheduleAutosave();
   }
 
   // =========================================================================
@@ -230,6 +323,21 @@ class TacticsController extends ChangeNotifier {
   void setShowTrails(bool v) {
     showTrails = v;
     notifyListeners();
+  }
+
+  void setShowNames(bool v) {
+    showNames = v;
+    notifyListeners();
+  }
+
+  /// Copies the selected player's name styling (font, colors, position, shadow)
+  /// onto every player, so the whole board can be styled in one action. The
+  /// per-player name *text* is left untouched.
+  void applyNameStyleToAll(Player source) {
+    for (final p in players) {
+      p.nameStyle = NameStyle.clone(source.nameStyle);
+    }
+    commit();
   }
 
   // =========================================================================
@@ -705,6 +813,20 @@ class TacticsController extends ChangeNotifier {
         np.position = Offset.lerp(sp.position, ep.position, u)!;
         np.size = _lerp(sp.size, ep.size, u);
         if ((ep.position - sp.position).distance > 0.5) np.trailFrom = sp.position;
+        // The name label resolves toward the destination keyframe (like arrows),
+        // so a label added while building the next frame animates in. Crossfade:
+        // added -> fade in, removed -> fade out, otherwise show the destination.
+        final sHas = sp.label.trim().isNotEmpty;
+        final eHas = ep.label.trim().isNotEmpty;
+        if (sHas && !eHas) {
+          np.label = sp.label; // keep the outgoing label visible while it fades
+          np.nameStyle = NameStyle.clone(sp.nameStyle);
+          np.labelOpacity = (1 - u).clamp(0.0, 1.0);
+        } else {
+          np.label = ep.label;
+          np.nameStyle = NameStyle.clone(ep.nameStyle);
+          np.labelOpacity = (!sHas && eHas) ? u.clamp(0.0, 1.0) : 1.0;
+        }
       } else {
         np.opacity = (1 - u).clamp(0.0, 1.0); // present at start only -> fade out
       }

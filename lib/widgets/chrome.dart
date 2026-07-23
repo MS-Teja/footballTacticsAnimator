@@ -274,6 +274,14 @@ class StageControls extends StatelessWidget {
           ),
           const SizedBox(width: 6),
           _ChipToggle(
+            icon: Icons.badge_outlined,
+            label: 'Names',
+            on: c.showNames,
+            tip: c.showNames ? 'Name labels shown — click to hide' : 'Name labels hidden — click to show',
+            onTap: () => c.setShowNames(!c.showNames),
+          ),
+          const SizedBox(width: 6),
+          _ChipToggle(
             icon: Icons.motion_photos_on_outlined,
             label: 'Trails',
             on: c.showTrails,
