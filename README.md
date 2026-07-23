@@ -1,141 +1,82 @@
 # Football Tactics Animator
 
-**A powerful and intuitive desktop application for macOS, built with Flutter, designed for football coaches, analysts, and content creators.**
-This tool allows you to create dynamic tactical animations, perfect for team meetings, analysis videos, and social media content.
-
-Bring your tactical ideas to life by animating player movements, drawing runs, and highlighting key areas of the pitch with a professional and easy-to-use interface.
+A desktop app for macOS (Flutter) for creating football/soccer tactical animations
+and **exporting them as real MP4 video** — built for coaches, analysts and content creators.
 
 ## Features
 
-### 🎬 Animation System
-- **Smooth Keyframe Animation:** Create complex multi-step animations with automatic interpolation
-- **Visual Timeline:** Thumbnail previews of each keyframe for easy management
-- **Real-time Preview:** Play animations before recording to perfect your tactics
-- **Fullscreen Recording:** Clean, distraction-free mode optimized for screen capture
-- **Professional Output:** Record directly using macOS screen capture tools
+### Pitch & board
+- **Procedurally drawn Broadcast Green pitch** — crisp vector markings at any resolution
+  (boundary, halfway line, centre circle, penalty & goal areas, penalty spots, D-arcs, corner arcs)
+  with mowed stripes. No blurry background image.
+- **Orientation toggle:** horizontal ↔ vertical.
+- **Layout toggle:** full pitch ↔ half pitch.
+- Positions are stored in real pitch metres, so toggles and export are always consistent.
 
-### ⚽ Interactive Tactics Board
-- **Smooth Canvas:** Responsive football pitch with full/half field layouts
-- **Drag & Drop:** Intuitive player and ball positioning
-- **Visual Feedback:** Selected players highlighted in yellow
-- **High Performance:** Optimized rendering for smooth interactions
+### Players & ball
+- **Numbered-disc tokens**, fully customizable: number/name, size, primary/secondary/text colors, or a photo.
+- **"Show numbers" toggle** for plain colored discs.
+- **Formation presets** per team (4-4-2, 4-3-3, 4-2-3-1, 3-5-2, 4-1-4-1).
+- Draggable ball (flat image).
 
-### 👥 Player & Ball Management
-- **Two Teams:** Distinct home (red) and away (blue) players
-- **Custom Images:** Upload player photos for realistic boards
-- **Flexible Sizing:** Adjust player token sizes individually or by team
-- **Custom Colors:** Set primary, secondary, and text colors for each player
+### Drawing tools
+- **Animated movement arrows** — straight and curved (either direction) — plus **oval zones**.
+- Each arrow animates during playback: pick **Draw along** or **Fade in**, and recolor or delete it.
+- Arrows trace out on their own quick clock so the head **leads the run to its destination**
+  ahead of the player, then keeps flowing — not glued to the mover.
 
-### 🎨 Professional Drawing Tools
-- **Straight Arrows:** Show direct player runs and passing lanes with arrowheads
-- **Curved Arrows (Left/Right):** Display curved movements, runs around defenders, or arcing passes
-- **Rectangular Highlights:** Mark zones, channels, and areas of play
-- **Oval Highlights:** Emphasize positions and danger areas
-- **Quick Clear:** Remove all drawings with one click
+### Animation
+- **Keyframe timeline** with thumbnails, reorderable, per-keyframe **transition duration**,
+  **easing**, and **hold** (pause on a frame) — all edited on the connector between frames.
+- Transport: play / pause / stop, **scrub** slider, **loop**, and **0.25×–2× speed**.
+- Smooth interpolation of player and ball positions (and size) between keyframes;
+  players fade in/out as they enter or leave; arrows draw themselves in.
+- **Motion trails** — an optional fading streak behind movers (toggle in the stage controls, off by default).
 
-### 💾 Project Management
-- **Save Projects:** Export complete tactical setups to JSON files
-- **Load Projects:** Resume work on saved animations
-- **Undo/Redo:** Full history system for all actions
-- **State Preservation:** Maintains all players, positions, keyframes, and drawings
+### Editor power tools
+- **Zoom & pan** the board (`⌘+` / `⌘-` / `⌘0`, scroll to pan) while keeping full edit gestures.
+- **Nudge** the selection with the arrow keys (hold `⇧` for a bigger step).
+- **Duplicate / copy / paste** players, arrows and zones.
 
-### 🎯 Keyframe Animation
-- **Easy Creation:** Add keyframes with current board state
-- **Visual Timeline:** Thumbnail previews of each keyframe
-- **Update & Delete:** Modify existing keyframes anytime
-- **Smooth Transitions:** Eased interpolation between keyframes
+### Video export (macOS)
+- **Native H.264 `.mp4` export** via AVFoundation (Rec.709 color) — no external tools, no screen recording.
+- Choose **720p / 1080p / 1440p**, **24 / 30 / 60 fps**, and **Standard / High / Max** quality.
+- Frames are rendered from a pure canvas at full resolution, so output is crisp regardless of window size.
+- "Reveal in Finder" when done.
 
-### 📊 Export & Sharing
-- **Fullscreen Recording Mode:** Clean, distraction-free view for screen recording
-- **Auto-Hide Controls:** Double-click to show/hide controls during recording
-- **Side-Positioned Controls:** Exit and play/pause buttons slide in from the right
-- **Screen Recording Ready:** Optimized for macOS screen capture (Cmd+Shift+5)
-- **Professional Presentation:** No UI clutter in your recordings
+### Project & workflow
+- Save / open projects as `.json` (board, keyframes and view settings).
+- Undo / redo, and keyboard shortcuts: `Space` play/pause, `⌘Z` / `⌘⇧Z` undo/redo,
+  `⌘S` save, `⌘D` duplicate, `⌘C` / `⌘V` copy/paste, arrow keys nudge (`⇧` = larger),
+  `⌘+` / `⌘-` / `⌘0` zoom, `Delete` remove selection, `Esc` deselect.
 
-## Getting Started
+## Getting started
 
-Follow these instructions to get the project running on your local machine.
+```sh
+flutter pub get
+flutter run -d macos
+```
 
-### Prerequisites
+Requires the Flutter SDK and Xcode. Saving files/video uses the macOS App Sandbox
+"user-selected file" access, which is already configured in the entitlements.
 
-- You must have the Flutter SDK installed on your macOS machine.
-- You need Xcode installed to configure the project and build the app.
+## Project structure
 
-### Setup Instructions
-
-1. **Clone the Repository:**
-    ```sh
-    git clone https://github.com/MS-Teja/footballTacticsAnimator.git
-    cd football-tactics-animator
-    ```
-
-2. **Add Dependencies:**
-   This project uses several packages for its functionality. Open the `pubspec.yaml` file and ensure the following dependencies are listed:
-    ```yaml
-    dependencies:
-      flutter:
-        sdk: flutter
-      image_picker: ^1.0.7
-      flutter_colorpicker: ^1.0.3
-      file_picker: ^6.2.0
-      cupertino_icons: ^1.0.2
-    ```
-   Then, run the following in your terminal to install them:
-    ```sh
-    flutter pub get
-    ```
-
-3. **Add Image Asset:**
-    - Create a new folder named `assets` in the root of your project.
-    - Place your football pitch background image inside this folder (e.g., `assets/football_field.jpg`).
-    - In `pubspec.yaml`, add the asset path so Flutter knows where to find it:
-      ```yaml
-      flutter:
-        uses-material-design: true
-        assets:
-          - assets/football_field.jpg
-      ```
-
-4. **Configure macOS App Sandbox (Crucial for Save/Load):**
-    - Open the macOS part of the project in Xcode by running:
-      ```sh
-      open macos/Runner.xcworkspace
-      ```
-    - In Xcode, click on the Runner project, then the Runner target, and go to the **Signing & Capabilities** tab.
-    - Click **+ Capability** and add **App Sandbox**.
-    - In the new App Sandbox section, find **File Access > User Selected File** and set its permission to **Read/Write**.
-
-5. **Run the App:**
-   Now, you can run the application from your code editor or via the terminal:
-    ```sh
-    flutter run -d macos
-    ```
-
-## How to Use
-
-- **Add Players:** Use the "Add Home" and "Add Away" buttons to place players on the pitch.
-- **Position Players:** Click and drag any player or the ball to your desired starting position.
-- **Create an Animation:**
-    1. Set up your initial formation.
-    2. Click "Add Keyframe".
-    3. Move the players to their next positions.
-    4. Click "Add Keyframe" again.
-    5. Repeat to build your sequence.
-- **Play Animation:** Click the "Play" button to see your tactical movement come to life.
-- **Draw on the Pitch:** Use straight arrows, curved arrows (left/right), rectangular highlights, or oval highlights to add analysis.
-- **Record with Screen Capture:**
-    1. Click the fullscreen icon to enter recording mode.
-    2. Use macOS screen recording (Cmd+Shift+5) to capture your animation.
-    3. Double-click to show controls, then click play to start animation.
-    4. Controls auto-hide after 3 seconds for clean recording.
-    5. Click fullscreen exit icon to return to editing mode.
-- **Customize:** Click on a player to open the edit panel. Change their name, color, or upload a photo. Use the team color pickers in the edit panel to change colors for all players on a team.
-- **Save Your Work:** Click "Save" to export your project to a file. Use "Load" to open it again later.
-
-## Contributing
-
-Contributions are welcome! If you have ideas for new features or find any bugs, please feel free to open an issue or submit a pull request.
+```
+lib/
+  models.dart                 # data models (metre-space) + formations
+  controller.dart             # app state, undo/redo, keyframes, animation engine
+  export/video_exporter.dart  # Dart side of the native MP4 encoder
+  export/board_renderer.dart  # pure-canvas frame renderer (thumbnails + export frames)
+  widgets/
+    pitch.dart                # PitchGeometry (metre<->screen) + procedural PitchPainter
+    tactics_board.dart        # interactive board, tokens, ball, animated drawings, trails
+    chrome.dart               # top bar + left tool rail
+    inspector.dart            # context inspector (player/ball/arrow/zone/team)
+    timeline.dart             # transport + keyframe strip
+macos/Runner/MainFlutterWindow.swift  # AVFoundation H.264 encoder (method channel)
+```
 
 ## License
 
-This project is licensed under the MIT License. See the `LICENSE` file for details.
+MIT — see `LICENSE`.

@@ -1,1626 +1,628 @@
-import 'dart:async';
 import 'dart:convert';
 import 'dart:ui' as ui;
-import 'package:flutter/services.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter/rendering.dart';
-import 'package:image_picker/image_picker.dart';
-import 'package:flutter_colorpicker/flutter_colorpicker.dart';
-import 'dart:math' as math;
-import 'utils/fullscreen_helper.dart';
+import 'package:flutter/gestures.dart' show PointerScrollEvent;
+import 'package:flutter/services.dart';
+
+import 'models.dart';
+import 'controller.dart';
+import 'theme.dart';
+import 'widgets/tactics_board.dart';
+import 'widgets/chrome.dart';
+import 'widgets/inspector.dart';
+import 'widgets/timeline.dart';
+import 'export/board_renderer.dart';
+import 'export/video_exporter.dart';
 import 'utils/file_helper.dart';
 
 void main() {
-  runApp(const MyApp());
+  WidgetsFlutterBinding.ensureInitialized();
+  runApp(const TacticsApp());
 }
 
-class MyApp extends StatelessWidget {
-  const MyApp({super.key});
+class TacticsApp extends StatelessWidget {
+  const TacticsApp({super.key});
 
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
       title: 'Tactics Animator',
-      theme: ThemeData(
-        brightness: Brightness.dark,
-        primarySwatch: Colors.green,
-        scaffoldBackgroundColor: const Color(0xFF121212),
-        cardColor: const Color(0xFF1E1E1E),
-        elevatedButtonTheme: ElevatedButtonThemeData(
-          style: ElevatedButton.styleFrom(
-            backgroundColor: Colors.green,
-            foregroundColor: Colors.white,
-          ),
-        ),
-        dividerColor: Colors.grey.shade800,
-      ),
-      home: const TacticsBoardPage(),
       debugShowCheckedModeBanner: false,
+      theme: buildAppTheme(),
+      home: const HomePage(),
     );
   }
 }
 
-// MARK: - Data Models
-class Player {
-  String id;
-  String name;
-  Offset position;
-  Color color;
-  Color? color2;
-  Color textColor;
-  double radius;
-  Uint8List? imageData;
-  Team team;
+class HomePage extends StatefulWidget {
+  const HomePage({super.key});
+  @override
+  State<HomePage> createState() => _HomePageState();
+}
 
-  Player({
-    required this.name,
-    required this.position,
-    required this.color,
-    this.color2,
-    this.textColor = Colors.white,
-    this.radius = 20.0,
-    this.imageData,
-    required this.team,
-  }) : id = UniqueKey().toString();
+class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
+  late final TacticsController c;
 
-  Player.clone(Player other)
-      : id = other.id,
-        name = other.name,
-        position = other.position,
-        color = other.color,
-        color2 = other.color2,
-        textColor = other.textColor,
-        radius = other.radius,
-        imageData = other.imageData,
-        team = other.team;
+  // Board view transform (zoom/pan for precise placement).
+  double _zoom = 1.0;
+  Offset _pan = Offset.zero;
 
-  Map<String, dynamic> toJson() => {
-    'id': id,
-    'name': name,
-    'dx': position.dx,
-    'dy': position.dy,
-    'color': {'a': (color.a * 255.0).round() & 0xff, 'r': (color.r * 255.0).round() & 0xff, 'g': (color.g * 255.0).round() & 0xff, 'b': (color.b * 255.0).round() & 0xff},
-    'color2': color2 != null ? {'a': (color2!.a * 255.0).round() & 0xff, 'r': (color2!.r * 255.0).round() & 0xff, 'g': (color2!.g * 255.0).round() & 0xff, 'b': (color2!.b * 255.0).round() & 0xff} : null,
-    'textColor': {'a': (textColor.a * 255.0).round() & 0xff, 'r': (textColor.r * 255.0).round() & 0xff, 'g': (textColor.g * 255.0).round() & 0xff, 'b': (textColor.b * 255.0).round() & 0xff},
-    'radius': radius,
-    'imageData': imageData != null ? base64Encode(imageData!) : null,
-    'team': team.index,
-  };
-
-  factory Player.fromJson(Map<String, dynamic> json) {
-    var colorMap = json['color'] as Map<String, dynamic>;
-    var color2Map = json['color2'] as Map<String, dynamic>?;
-    var textColorMap = json['textColor'] as Map<String, dynamic>?;
-
-    return Player(
-      name: json['name'],
-      position: Offset(json['dx'], json['dy']),
-      color: Color.fromARGB(colorMap['a'], colorMap['r'], colorMap['g'], colorMap['b']),
-      color2: color2Map != null ? Color.fromARGB(color2Map['a'], color2Map['r'], color2Map['g'], color2Map['b']) : null,
-      textColor: textColorMap != null ? Color.fromARGB(textColorMap['a'], textColorMap['r'], textColorMap['g'], textColorMap['b']) : Colors.white,
-      radius: json['radius'],
-      imageData: json['imageData'] != null ? base64Decode(json['imageData']) : null,
-      team: Team.values[json['team']],
-    )..id = json['id'];
+  void _zoomBy(double f) => setState(() {
+        _zoom = (_zoom * f).clamp(1.0, 4.0);
+        if (_zoom == 1.0) _pan = Offset.zero;
+      });
+  void _resetView() => setState(() {
+        _zoom = 1.0;
+        _pan = Offset.zero;
+      });
+  void _panBy(Offset d) {
+    if (_zoom <= 1.0) return;
+    setState(() {
+      final max = 500 * (_zoom - 1);
+      _pan = Offset((_pan.dx + d.dx).clamp(-max, max), (_pan.dy + d.dy).clamp(-max, max));
+    });
   }
-}
-
-class Ball {
-  Offset position;
-  Color color = Colors.yellow;
-  double radius = 12.0;
-
-  Ball({required this.position});
-
-  Ball.clone(Ball other)
-      : position = other.position,
-        color = other.color,
-        radius = other.radius;
-
-  Map<String, dynamic> toJson() => {
-    'dx': position.dx,
-    'dy': position.dy,
-    'color': {'a': (color.a * 255.0).round() & 0xff, 'r': (color.r * 255.0).round() & 0xff, 'g': (color.g * 255.0).round() & 0xff, 'b': (color.b * 255.0).round() & 0xff},
-    'radius': radius,
-  };
-
-  factory Ball.fromJson(Map<String, dynamic> json) {
-    var colorMap = json['color'] as Map<String, dynamic>;
-    return Ball(position: Offset(json['dx'], json['dy']))
-      ..color = Color.fromARGB(colorMap['a'], colorMap['r'], colorMap['g'], colorMap['b'])
-      ..radius = json['radius'];
-  }
-}
-
-class Arrow {
-  Offset start;
-  Offset end;
-  Offset? controlPoint; // For curved arrows
-  bool isCurved;
-  
-  Arrow({required this.start, required this.end, this.controlPoint, this.isCurved = false});
-
-  Map<String, dynamic> toJson() => {
-    'startX': start.dx, 
-    'startY': start.dy, 
-    'endX': end.dx, 
-    'endY': end.dy,
-    'isCurved': isCurved,
-    'controlX': controlPoint?.dx,
-    'controlY': controlPoint?.dy,
-  };
-  
-  factory Arrow.fromJson(Map<String, dynamic> json) {
-    final isCurved = json['isCurved'] ?? false;
-    Offset? controlPoint;
-    if (isCurved && json['controlX'] != null && json['controlY'] != null) {
-      controlPoint = Offset(json['controlX'], json['controlY']);
-    }
-    return Arrow(
-      start: Offset(json['startX'], json['startY']), 
-      end: Offset(json['endX'], json['endY']),
-      controlPoint: controlPoint,
-      isCurved: isCurved,
-    );
-  }
-}
-
-class Highlight {
-  Rect rect;
-  bool isOval;
-  Highlight({required this.rect, this.isOval = false});
-
-  Map<String, dynamic> toJson() => {'left': rect.left, 'top': rect.top, 'width': rect.width, 'height': rect.height, 'isOval': isOval};
-  factory Highlight.fromJson(Map<String, dynamic> json) => Highlight(rect: Rect.fromLTWH(json['left'], json['top'], json['width'], json['height']), isOval: json['isOval']);
-}
-
-class BoardState {
-  List<Player> players;
-  Ball? ball;
-  List<Arrow> arrows;
-  List<Highlight> highlights;
-  BoardLayout boardLayout;
-
-  BoardState({required this.players, this.ball, required this.arrows, required this.highlights, this.boardLayout = BoardLayout.full});
-
-  BoardState.clone(BoardState other)
-      : players = other.players.map((p) => Player.clone(p)).toList(),
-        ball = other.ball != null ? Ball.clone(other.ball!) : null,
-        arrows = List.from(other.arrows),
-        highlights = List.from(other.highlights),
-        boardLayout = other.boardLayout;
-
-  Map<String, dynamic> toJson() => {
-    'players': players.map((p) => p.toJson()).toList(),
-    'ball': ball?.toJson(),
-    'arrows': arrows.map((a) => a.toJson()).toList(),
-    'highlights': highlights.map((h) => h.toJson()).toList(),
-    'boardLayout': boardLayout.index,
-  };
-
-  factory BoardState.fromJson(Map<String, dynamic> json) => BoardState(
-    players: (json['players'] as List).map((p) => Player.fromJson(p)).toList(),
-    ball: json['ball'] != null ? Ball.fromJson(json['ball']) : null,
-    arrows: (json['arrows'] as List).map((a) => Arrow.fromJson(a)).toList(),
-    highlights: (json['highlights'] as List).map((h) => Highlight.fromJson(h)).toList(),
-    boardLayout: json['boardLayout'] != null ? BoardLayout.values[json['boardLayout']] : BoardLayout.full,
-  );
-}
-
-class AnimationKeyframe {
-  BoardState boardState;
-  Uint8List? thumbnail; // To store a preview image
-
-  AnimationKeyframe({required this.boardState, this.thumbnail});
-}
-
-enum Tool { none, arrow, curvedArrowLeft, curvedArrowRight, highlightRect, highlightOval }
-enum Team { home, away }
-enum BoardLayout { full, half }
-
-// MARK: - Main Page
-// MARK: - Main Page
-class _TacticsBoardPageState extends State<TacticsBoardPage> with TickerProviderStateMixin {
-  final GlobalKey _boardKey = GlobalKey();
-  List<Player> players = [];
-  Ball? ball;
-  List<Arrow> arrows = [];
-  List<Highlight> highlights = [];
-  List<AnimationKeyframe> keyframes = [];
-
-  Player? selectedPlayer;
-  int? selectedKeyframeIndex;
-  Tool activeTool = Tool.none;
-  Offset? dragStart;
-  Offset? currentDrag;
-  BoardLayout boardLayout = BoardLayout.full;
-
-  int homePlayerCount = 0;
-  int awayPlayerCount = 0;
-
-  bool isAnimating = false;
-  late AnimationController _animationController;
-
-  bool isRecording = false;
-  bool isFullscreenRecording = false;
-  bool _showFullscreenControls = false;
-  Timer? _controlsHideTimer;
-
-  final List<BoardState> _history = [];
-  final List<BoardState> _redoStack = [];
-  BoardState? _savedStateBeforeAnimation;
-
-  Uint8List? customPitchImage;
 
   @override
   void initState() {
     super.initState();
-    _animationController = AnimationController(vsync: this);
-    _animationController.addListener(_onAnimationTick);
-    _animationController.addStatusListener(_onAnimationStatus);
-    _saveState();
+    c = TacticsController(vsync: this);
+    c.addListener(_changed);
   }
 
-  Future<void> _pickPitchImage() async {
-    final ImagePicker picker = ImagePicker();
-    final XFile? image = await picker.pickImage(source: ImageSource.gallery);
-    if (image != null) {
-      final bytes = await image.readAsBytes();
-      setState(() {
-        customPitchImage = bytes;
-      });
+  void _changed() => setState(() {});
+
+  @override
+  void dispose() {
+    c.removeListener(_changed);
+    c.dispose();
+    super.dispose();
+  }
+
+  // ---- Frame capture (pure canvas — no widget tree) -----------------------
+  Future<ui.Image> _renderImage(BoardState state, int width, int height,
+      {double reveal = 1.0, double flowPhase = 0.0}) {
+    return BoardRenderer.render(
+      state: state,
+      orientation: c.orientation,
+      layout: c.layout,
+      showNumbers: c.showNumbers,
+      width: width,
+      height: height,
+      reveal: reveal,
+      flowPhase: flowPhase,
+      trails: c.showTrails,
+    );
+  }
+
+  Future<Uint8List?> _capturePng(BoardState state) async {
+    try {
+      final image = await _renderImage(state, 384, 216);
+      final data = await image.toByteData(format: ui.ImageByteFormat.png);
+      image.dispose();
+      return data?.buffer.asUint8List();
+    } catch (e) {
+      debugPrint('thumbnail failed: $e');
+      return null;
     }
   }
 
-  void _showToast(String message) {
-    if (!mounted) return;
-    ScaffoldMessenger.of(context).clearSnackBars();
-    
-    // Calculate margins to position the toast at the bottom left with a fixed width
-    final screenWidth = MediaQuery.of(context).size.width;
-    const toastWidth = 200.0;
-    const margin = 10.0;
+  // ---- Keyframes ----------------------------------------------------------
+  Future<void> _addKeyframe() async {
+    final thumb = await _capturePng(c.displayState);
+    c.addKeyframe(thumb);
+    _toast('Keyframe ${c.keyframes.length} captured');
+  }
 
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(message, style: const TextStyle(fontSize: 12), textAlign: TextAlign.center),
-        behavior: SnackBarBehavior.floating,
-        // Force the snackbar to the bottom left by setting a large right margin
-        margin: EdgeInsets.only(
-          left: margin,
-          bottom: margin,
-          right: screenWidth - toastWidth - margin,
-        ),
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-        duration: const Duration(seconds: 2),
-        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+  Future<void> _updateKeyframeAt(int i) async {
+    if (i < 0 || i >= c.keyframes.length) return;
+    final thumb = await _capturePng(c.displayState);
+    c.updateKeyframe(i, thumb);
+    _toast('Keyframe ${i + 1} updated');
+  }
+
+  // ---- Save / Load --------------------------------------------------------
+  Future<void> _save() async {
+    final map = {
+      'version': 3,
+      'name': c.projectName,
+      'document': BoardState(players: c.players, ball: c.ball, arrows: c.arrows, highlights: c.highlights).toJson(),
+      'keyframes': c.keyframes.map((k) => k.toJson()).toList(),
+      'view': {
+        'orientation': c.orientation.index,
+        'layout': c.layout.index,
+        'showNumbers': c.showNumbers,
+        'showTrails': c.showTrails,
+      },
+    };
+    final safe = c.projectName.replaceAll(RegExp(r'[^A-Za-z0-9 _-]'), '').trim();
+    final path = await saveTextFile(jsonEncode(map), '${safe.isEmpty ? 'tactics_project' : safe}.json');
+    if (path != null) _toast('Saved');
+  }
+
+  Future<void> _load() async {
+    final str = await loadTextFile();
+    if (str == null) return;
+    try {
+      final map = jsonDecode(str) as Map<String, dynamic>;
+      if (map.containsKey('document')) {
+        c.loadDocument(BoardState.fromJson(map['document']));
+        if (map['keyframes'] != null) {
+          c.loadKeyframes((map['keyframes'] as List).map((k) => Keyframe.fromJson(k)).toList());
+        }
+        final view = map['view'] as Map<String, dynamic>?;
+        if (view != null) {
+          c.orientation = BoardOrientation.values[view['orientation'] ?? 0];
+          c.layout = BoardLayout.values[view['layout'] ?? 0];
+          c.showNumbers = view['showNumbers'] ?? true;
+          c.showTrails = view['showTrails'] ?? false;
+        }
+        if (map['name'] != null) c.setProjectName(map['name']);
+        c.refresh();
+      } else {
+        c.loadDocument(BoardState.fromJson(map));
+      }
+      _toast('Loaded');
+    } catch (e) {
+      _toast('Could not load project');
+      debugPrint('load error: $e');
+    }
+  }
+
+  // ---- Video export -------------------------------------------------------
+  Future<void> _exportVideo() async {
+    if (c.keyframes.length < 2) return;
+    if (!VideoExporter.isSupported) {
+      _toast('Video export is only available on macOS');
+      return;
+    }
+    final settings = await showDialog<_ExportSettings>(context: context, builder: (_) => const _ExportDialog());
+    if (settings == null) return;
+    final path = await pickVideoSavePath('${c.projectName}.mp4');
+    if (path == null) return;
+
+    final width = settings.width;
+    final height = (settings.width * 9 / 16).round();
+    final fps = settings.fps;
+    final bitrate = (width * height * fps * settings.quality).round().clamp(2000000, 80000000);
+    final frameCount = (c.totalDuration * fps).round().clamp(2, 36000);
+
+    final progress = ValueNotifier<double>(0);
+    var cancelled = false;
+    if (!mounted) return;
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => _ProgressDialog(progress: progress, onCancel: () {
+        cancelled = true;
+        Navigator.of(ctx).pop();
+      }),
+    );
+
+    final exporter = VideoExporter();
+    try {
+      await exporter.start(path: path, width: width, height: height, fps: fps, bitrate: bitrate);
+      for (var i = 0; i < frameCount; i++) {
+        if (cancelled) break;
+        final t = frameCount == 1 ? 0.0 : i / (frameCount - 1);
+        final sample = c.sampleAt(t);
+        final flowPhase = (t * c.totalDuration) / kArrowFlowPeriod; // matches the board's flow period
+        final image = await _renderImage(sample.state, width, height,
+            reveal: sample.progress, flowPhase: flowPhase);
+        final data = await image.toByteData(format: ui.ImageByteFormat.rawRgba);
+        image.dispose();
+        if (data != null) await exporter.addFrame(data.buffer.asUint8List());
+        progress.value = (i + 1) / frameCount;
+      }
+      cancelled ? await exporter.cancel() : await exporter.finish();
+    } catch (e) {
+      cancelled = true;
+      debugPrint('export error: $e');
+    }
+
+    if (!mounted) return;
+    if (Navigator.of(context).canPop()) Navigator.of(context).pop();
+    cancelled ? _toast('Export cancelled') : _showExportComplete(path);
+  }
+
+  void _showExportComplete(String path) {
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: AppColors.panel2,
+        icon: const Icon(Icons.check_circle, color: AppColors.accent, size: 40),
+        title: const Text('Video exported'),
+        content: Text('Saved to:\n$path', style: const TextStyle(color: AppColors.tx2)),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Close')),
+          FilledButton.icon(
+            style: FilledButton.styleFrom(backgroundColor: AppColors.accent, foregroundColor: const Color(0xFF08130B)),
+            icon: const Icon(Icons.folder_open),
+            label: const Text('Reveal in Finder'),
+            onPressed: () {
+              VideoExporter().reveal(path);
+              Navigator.pop(ctx);
+            },
+          ),
+        ],
       ),
     );
   }
 
-  @override
-  void dispose() {
-    _animationController.dispose();
-    _controlsHideTimer?.cancel();
-    isRecording = false; // This will stop the callback from capturing frames
-    super.dispose();
-  }
-
-  void _saveState() {
-    _history.add(BoardState(
-      players: players.map((p) => Player.clone(p)).toList(),
-      ball: ball != null ? Ball.clone(ball!) : null,
-      arrows: List.from(arrows),
-      highlights: List.from(highlights),
-      boardLayout: boardLayout,
-    ));
-    _redoStack.clear();
-  }
-
-  void _undo() {
-    if (_history.length > 1) {
-      setState(() {
-        final currentState = _history.removeLast();
-        _redoStack.add(currentState);
-        final prevState = _history.last;
-        _applyBoardState(prevState);
-        selectedPlayer = null;
-      });
-    }
-  }
-
-  void _redo() {
-    if (_redoStack.isNotEmpty) {
-      setState(() {
-        final nextState = _redoStack.removeLast();
-        _history.add(nextState);
-        _applyBoardState(nextState);
-        selectedPlayer = null;
-      });
-    }
-  }
-
-  void _applyBoardState(BoardState state) {
-    players = state.players.map((p) => Player.clone(p)).toList();
-    ball = state.ball != null ? Ball.clone(state.ball!) : null;
-    arrows = List.from(state.arrows);
-    highlights = List.from(state.highlights);
-    boardLayout = state.boardLayout;
-  }
-
-  void _saveToFile() async {
-    final state = BoardState(players: players, ball: ball, arrows: arrows, highlights: highlights, boardLayout: boardLayout);
-    final jsonString = jsonEncode(state.toJson());
-
-    await saveProject(jsonString, 'tactics.json');
-    _showToast('Project Saved!');
-  }
-
-  void _loadFromFile() async {
-    final jsonString = await loadProject();
-
-    if (jsonString != null) {
-      final jsonMap = jsonDecode(jsonString);
-      final state = BoardState.fromJson(jsonMap);
-      setState(() {
-        _applyBoardState(state);
-        _history.clear();
-        _redoStack.clear();
-        _saveState();
-      });
-      _showToast('Project Loaded!');
-    }
-  }
-
-  void _addPlayer(Team team) {
-    setState(() {
-      final newPlayer = Player(
-        name: team == Team.home ? "${++homePlayerCount}" : "${++awayPlayerCount}",
-        position: Offset(team == Team.home ? 200 : 800, 300 + (players.length * 10)),
-        color: team == Team.home ? Colors.red.shade700 : Colors.blue.shade700,
-        team: team,
-      );
-      players.add(newPlayer);
-    });
-    _saveState();
-  }
-
-  void _addBall() {
-    if (ball == null) {
-      setState(() {
-        ball = Ball(position: const Offset(500, 350));
-      });
-      _saveState();
-    }
-  }
-
-  Future<void> _addKeyframe() async {
-    final thumbnail = await _captureFrame(saveToList: false);
-    setState(() {
-      keyframes.add(AnimationKeyframe(
-        boardState: BoardState.clone(BoardState(players: players, ball: ball, arrows: arrows, highlights: highlights, boardLayout: boardLayout)),
-        thumbnail: thumbnail,
+  // ---- Misc ---------------------------------------------------------------
+  void _toast(String msg) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context)
+      ..clearSnackBars()
+      ..showSnackBar(SnackBar(
+        content: Text(msg),
+        behavior: SnackBarBehavior.floating,
+        width: 260,
+        backgroundColor: AppColors.elev,
+        duration: const Duration(seconds: 2),
       ));
-    });
-    _showToast('Keyframe ${keyframes.length} added!');
   }
 
-  void _updateKeyframe() {
-    if (selectedKeyframeIndex != null) {
-      setState(() {
-        keyframes[selectedKeyframeIndex!].boardState = BoardState.clone(BoardState(players: players, ball: ball, arrows: arrows, highlights: highlights, boardLayout: boardLayout));
-      });
-      WidgetsBinding.instance.addPostFrameCallback((_) async {
-        final thumbnail = await _captureFrame(saveToList: false);
-        setState(() {
-          keyframes[selectedKeyframeIndex!].thumbnail = thumbnail;
-        });
-      });
-      _showToast('Keyframe updated!');
+  bool get _isEditingText => FocusManager.instance.primaryFocus?.context?.widget is EditableText;
+
+  KeyEventResult _onKey(FocusNode node, KeyEvent event) {
+    if (event is! KeyDownEvent) return KeyEventResult.ignored;
+    final meta = HardwareKeyboard.instance.isMetaPressed;
+    final shift = HardwareKeyboard.instance.isShiftPressed;
+    if (meta && event.logicalKey == LogicalKeyboardKey.keyZ) {
+      shift ? c.redo() : c.undo();
+      return KeyEventResult.handled;
     }
-  }
-
-  void _deleteKeyframe() {
-    if (selectedKeyframeIndex != null) {
-      setState(() {
-        keyframes.removeAt(selectedKeyframeIndex!);
-        selectedKeyframeIndex = null;
-      });
+    if (meta && event.logicalKey == LogicalKeyboardKey.keyS) {
+      _save();
+      return KeyEventResult.handled;
     }
-  }
-
-  void _playAnimation() {
-    if (keyframes.length < 2 || isAnimating) return;
-    
-    _savedStateBeforeAnimation = BoardState.clone(BoardState(players: players, ball: ball, arrows: arrows, highlights: highlights, boardLayout: boardLayout));
-    
-    setState(() {
-      isAnimating = true;
-      _applyBoardState(keyframes[0].boardState);
-    });
-
-    _animationController.duration = Duration(seconds: 2 * (keyframes.length - 1));
-    _animationController.forward(from: 0.0);
-  }
-
-  void _onAnimationTick() {
-    if (!isAnimating || keyframes.length < 2) return;
-
-    final totalSegments = keyframes.length - 1;
-    final totalProgress = _animationController.value * totalSegments;
-    int currentSegment = totalProgress.floor();
-    if (currentSegment >= totalSegments) currentSegment = totalSegments - 1;
-    final segmentProgress = totalProgress - currentSegment;
-
-    final startFrame = keyframes[currentSegment];
-    final endFrame = keyframes[currentSegment + 1];
-
-    setState(() {
-      for (var i = 0; i < players.length; i++) {
-        final startPlayer = startFrame.boardState.players.firstWhere((p) => p.id == players[i].id, orElse: () => players[i]);
-        final endPlayer = endFrame.boardState.players.firstWhere((p) => p.id == players[i].id, orElse: () => players[i]);
-        players[i].position = Offset.lerp(startPlayer.position, endPlayer.position, segmentProgress)!;
+    if (_isEditingText) return KeyEventResult.ignored;
+    final key = event.logicalKey;
+    if (meta) {
+      if (key == LogicalKeyboardKey.keyD) {
+        c.duplicateSelection();
+        return KeyEventResult.handled;
       }
-      if (ball != null && startFrame.boardState.ball != null && endFrame.boardState.ball != null) {
-        ball!.position = Offset.lerp(startFrame.boardState.ball!.position, endFrame.boardState.ball!.position, segmentProgress)!;
+      if (key == LogicalKeyboardKey.keyC) {
+        c.copySelection();
+        return KeyEventResult.handled;
       }
-    });
-  }
-
-  void _onAnimationStatus(AnimationStatus status) {
-    if (status == AnimationStatus.completed) {
-      setState(() {
-        isAnimating = false;
-        if (_savedStateBeforeAnimation != null) {
-          _applyBoardState(_savedStateBeforeAnimation!);
-          _savedStateBeforeAnimation = null;
-        }
-      });
+      if (key == LogicalKeyboardKey.keyV) {
+        c.paste();
+        return KeyEventResult.handled;
+      }
+      if (key == LogicalKeyboardKey.equal || key == LogicalKeyboardKey.add) {
+        _zoomBy(1.2);
+        return KeyEventResult.handled;
+      }
+      if (key == LogicalKeyboardKey.minus) {
+        _zoomBy(1 / 1.2);
+        return KeyEventResult.handled;
+      }
+      if (key == LogicalKeyboardKey.digit0) {
+        _resetView();
+        return KeyEventResult.handled;
+      }
     }
-  }
-
-  void _stopAnimation() {
-    if (!isAnimating) return;
-    _animationController.stop();
-    setState(() {
-      isAnimating = false;
-    });
-  }
-
-  // Recording mode: Enter fullscreen for screen recording
-  void _toggleRecording() {
-    setState(() {
-      isRecording = !isRecording;
-      isFullscreenRecording = isRecording;
-      
-      if (isRecording) {
-        enterFullscreen();
-      } else {
-        exitFullscreen();
-        // Show completion message when stopping
-        _showRecordingCompleteMessage();
-      }
-    });
-  }
-
-  void _showRecordingCompleteMessage() {
-    _showToast('Recording stopped');
-  }
-
-  Future<Uint8List?> _captureFrame({bool saveToList = false}) async {
-    try {
-      RenderRepaintBoundary boundary = _boardKey.currentContext!.findRenderObject() as RenderRepaintBoundary;
-      ui.Image image = await boundary.toImage(pixelRatio: 1.5);
-      ByteData? byteData = await image.toByteData(format: ui.ImageByteFormat.png);
-      if (byteData != null) {
-        return byteData.buffer.asUint8List();
-      }
-    } catch (e) {
-      debugPrint('Error capturing frame: $e');
+    if (key == LogicalKeyboardKey.space) {
+      if (c.keyframes.length >= 2) c.isPlaying ? c.pause() : c.play();
+      return KeyEventResult.handled;
     }
+    if (key == LogicalKeyboardKey.delete || key == LogicalKeyboardKey.backspace) {
+      c.removeSelected();
+      return KeyEventResult.handled;
+    }
+    if (key == LogicalKeyboardKey.escape) {
+      c.selectMode();
+      c.clearSelection();
+      return KeyEventResult.handled;
+    }
+    final nudge = _nudgeDelta(key, HardwareKeyboard.instance.isShiftPressed);
+    if (nudge != null && c.nudgeSelection(nudge)) return KeyEventResult.handled;
+    return KeyEventResult.ignored;
+  }
+
+  /// Arrow-key nudge in metres, mapped so it matches on-screen direction for the
+  /// current orientation.
+  Offset? _nudgeDelta(LogicalKeyboardKey key, bool shift) {
+    final s = shift ? 2.0 : 0.5;
+    final horiz = c.orientation == BoardOrientation.horizontal;
+    if (key == LogicalKeyboardKey.arrowLeft) return horiz ? Offset(-s, 0) : Offset(0, -s);
+    if (key == LogicalKeyboardKey.arrowRight) return horiz ? Offset(s, 0) : Offset(0, s);
+    if (key == LogicalKeyboardKey.arrowUp) return horiz ? Offset(0, -s) : Offset(s, 0);
+    if (key == LogicalKeyboardKey.arrowDown) return horiz ? Offset(0, s) : Offset(-s, 0);
     return null;
   }
 
-  void _resetAll() {
-    setState(() {
-      players.clear(); ball = null; arrows.clear(); highlights.clear();
-      keyframes.clear(); selectedPlayer = null; homePlayerCount = 0;
-      awayPlayerCount = 0; activeTool = Tool.none; selectedKeyframeIndex = null;
-    });
-    _saveState();
-  }
-
-  void _clearDrawings() {
-    setState(() {
-      arrows.clear();
-      highlights.clear();
-    });
-    _saveState();
-  }
-
-  void _updateTeamColor(Team team, Color color, bool isPrimary) {
-    setState(() {
-      for (var player in players) {
-        if (player.team == team) {
-          if (isPrimary) {
-            player.color = color;
-          } else {
-            player.color2 = color;
-          }
-        }
-      }
-    });
-    _saveState();
-  }
-
-  void _updateTeamPlayerSize(Team team, double size) {
-    setState(() {
-      for (var player in players) {
-        if (player.team == team) {
-          player.radius = size;
-        }
-      }
-    });
-    _saveState();
-  }
-
-  void _toggleLayout() {
-    setState(() {
-      boardLayout = boardLayout == BoardLayout.full ? BoardLayout.half : BoardLayout.full;
-    });
-    _saveState();
-  }
-
-  void _onPlayerTap(Player player) => setState(() => selectedPlayer = player);
-  void _onPlayerDragUpdate(Player player, DragUpdateDetails details) => setState(() => player.position += details.delta);
-  void _onPlayerDragEnd() => _saveState();
-  void _onBallDragUpdate(DragUpdateDetails details) => setState(() => ball?.position += details.delta);
-
-  void _onBoardDragStart(DragStartDetails details) {
-    if (activeTool != Tool.none) {
-      setState(() {
-        dragStart = details.localPosition;
-        currentDrag = details.localPosition;
-      });
-    } else {
-      setState(() {
-        selectedPlayer = null;
-        selectedKeyframeIndex = null;
-      });
-    }
-  }
-
-  void _onBoardDragUpdate(DragUpdateDetails details) {
-    if (activeTool != Tool.none) {
-      setState(() { currentDrag = details.localPosition; });
-    }
-  }
-
-  void _onBoardDragEnd(DragEndDetails details) {
-    if (activeTool != Tool.none && dragStart != null && currentDrag != null) {
-      setState(() {
-        if (activeTool == Tool.arrow) {
-          arrows.add(Arrow(start: dragStart!, end: currentDrag!, isCurved: false));
-        } else if (activeTool == Tool.curvedArrowLeft || activeTool == Tool.curvedArrowRight) {
-          // Calculate control point for curve (perpendicular to midpoint)
-          final midpoint = Offset(
-            (dragStart!.dx + currentDrag!.dx) / 2,
-            (dragStart!.dy + currentDrag!.dy) / 2,
-          );
-          final dx = currentDrag!.dx - dragStart!.dx;
-          final dy = currentDrag!.dy - dragStart!.dy;
-          final length = math.sqrt(dx * dx + dy * dy);
-          final curvature = length * 0.3; // 30% curve
-          
-          // Direction is determined by which button was clicked
-          final direction = activeTool == Tool.curvedArrowLeft ? -1.0 : 1.0;
-          
-          // Perpendicular offset
-          final controlPoint = Offset(
-            midpoint.dx - dy / length * curvature * direction,
-            midpoint.dy + dx / length * curvature * direction,
-          );
-          
-          arrows.add(Arrow(
-            start: dragStart!, 
-            end: currentDrag!, 
-            controlPoint: controlPoint,
-            isCurved: true,
-          ));
-        } else if (activeTool == Tool.highlightRect) {
-          highlights.add(Highlight(rect: Rect.fromPoints(dragStart!, currentDrag!)));
-        } else if (activeTool == Tool.highlightOval) {
-          highlights.add(Highlight(rect: Rect.fromPoints(dragStart!, currentDrag!), isOval: true));
-        }
-        activeTool = Tool.none;
-        dragStart = null;
-        currentDrag = null;
-      });
-      _saveState();
-    }
-  }
+  bool get _boardEmpty => c.players.isEmpty && c.ball == null && c.keyframes.isEmpty;
 
   @override
   Widget build(BuildContext context) {
-    // Fullscreen mode for screen recording
-    if (isFullscreenRecording) {
-      return CallbackShortcuts(
-        bindings: {
-          const SingleActivator(LogicalKeyboardKey.space): () {
-            if (isAnimating) {
-              _stopAnimation();
-            } else {
-              _playAnimation();
-            }
-            setState(() => _showFullscreenControls = false);
-            _controlsHideTimer?.cancel();
-          },
-        },
-        child: Focus(
-          autofocus: true,
-          child: Scaffold(
-            body: GestureDetector(
-              onDoubleTap: () {
-                setState(() {
-                  _showFullscreenControls = !_showFullscreenControls;
-                });
-                if (_showFullscreenControls) {
-                  _controlsHideTimer?.cancel();
-                  _controlsHideTimer = Timer(const Duration(seconds: 3), () {
-                    if (mounted) {
-                      setState(() => _showFullscreenControls = false);
-                    }
-                  });
-                }
-              },
-              child: Stack(
+    return Focus(
+      autofocus: true,
+      onKeyEvent: _onKey,
+      child: Scaffold(
+        body: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            TopBar(c: c, onSave: _save, onLoad: _load, onExport: _exportVideo),
+            Expanded(
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  RepaintBoundary(
-                    key: _boardKey,
-                    child: IgnorePointer(
-                      ignoring: isAnimating,
-                      child: TacticsBoard(
-                        players: players, ball: ball, arrows: arrows, highlights: highlights,
-                        dragStart: dragStart, currentDrag: currentDrag, activeTool: Tool.none,
-                        selectedPlayer: null,
-                        layout: boardLayout,
-                        customPitchImage: customPitchImage,
-                        onPlayerTap: _onPlayerTap, onPlayerDragUpdate: _onPlayerDragUpdate, onBallDragUpdate: _onBallDragUpdate,
-                        onPlayerDragEnd: _onPlayerDragEnd, onBallDragEnd: _onPlayerDragEnd,
+                  ToolRail(c: c),
+                  Expanded(
+                    child: Listener(
+                      onPointerSignal: (s) {
+                        if (s is PointerScrollEvent) _panBy(-s.scrollDelta);
+                      },
+                      child: Container(
+                        color: AppColors.stage,
+                        padding: const EdgeInsets.all(20),
+                        child: Stack(
+                          children: [
+                            Center(
+                              child: Transform(
+                                alignment: Alignment.center,
+                                // Column-major scale (_zoom) + translate (_pan).
+                                transform: Matrix4(
+                                  _zoom, 0, 0, 0,
+                                  0, _zoom, 0, 0,
+                                  0, 0, 1, 0,
+                                  _pan.dx, _pan.dy, 0, 1,
+                                ),
+                                transformHitTests: true,
+                                child: TacticsBoard(controller: c),
+                              ),
+                            ),
+                            if (_boardEmpty) const Positioned.fill(child: _EmptyHint()),
+                            Positioned(top: 8, right: 8, child: StageControls(c: c)),
+                            if (c.hasPreview)
+                              Positioned(
+                                bottom: 12,
+                                left: 0,
+                                right: 0,
+                                child: Center(child: _PreviewChip(c: c)),
+                              ),
+                            if (_zoom > 1.01)
+                              Positioned(bottom: 12, left: 12, child: _ZoomChip(zoom: _zoom, onReset: _resetView)),
+                          ],
+                        ),
                       ),
                     ),
                   ),
-                  // Side controls that auto-hide
-                  AnimatedPositioned(
-                    duration: const Duration(milliseconds: 300),
-                    right: _showFullscreenControls ? 20 : -100,
-                    top: MediaQuery.of(context).size.height / 2 - 80,
-                    child: IgnorePointer(
-                      ignoring: !_showFullscreenControls,
-                      child: Column(
-                        children: [
-                          // Exit fullscreen button
-                          FloatingActionButton(
-                            heroTag: 'exit',
-                            onPressed: () {
-                              setState(() => isFullscreenRecording = false);
-                              _controlsHideTimer?.cancel();
-                            },
-                            child: const Icon(Icons.fullscreen_exit),
-                          ),
-                          const SizedBox(height: 16),
-                          // Play/Pause button
-                          FloatingActionButton(
-                            heroTag: 'play',
-                            onPressed: () {
-                              if (isAnimating) {
-                                _stopAnimation();
-                              } else {
-                                _playAnimation();
-                              }
-                              // Hide controls immediately when play is pressed
-                              setState(() => _showFullscreenControls = false);
-                              _controlsHideTimer?.cancel();
-                            },
-                            child: Icon(isAnimating ? Icons.pause : Icons.play_arrow),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ),
+                  InspectorPanel(c: c),
                 ],
               ),
             ),
-          ),
-        ),
-      );
-    }
-
-    // Normal editing mode
-    return Scaffold(
-      appBar: AppBar(title: const Text('Tactics Animator'), elevation: 0),
-      body: Row(
-        children: [
-          Expanded(
-            child: Column(
-              children: [
-                Expanded(
-                  child: Padding(
-                    padding: const EdgeInsets.all(16.0),
-                    child: RepaintBoundary(
-                      key: _boardKey,
-                      child: IgnorePointer(
-                        ignoring: isAnimating,
-                        child: GestureDetector(
-                          onPanStart: _onBoardDragStart,
-                          onPanUpdate: _onBoardDragUpdate,
-                          onPanEnd: _onBoardDragEnd,
-                          child: TacticsBoard(
-                            players: players, ball: ball, arrows: arrows, highlights: highlights,
-                            dragStart: dragStart, currentDrag: currentDrag, activeTool: activeTool,
-                            selectedPlayer: selectedPlayer,
-                            layout: boardLayout,
-                            customPitchImage: customPitchImage,
-                            onPlayerTap: _onPlayerTap, onPlayerDragUpdate: _onPlayerDragUpdate, onBallDragUpdate: _onBallDragUpdate,
-                            onPlayerDragEnd: _onPlayerDragEnd, onBallDragEnd: _onPlayerDragEnd,
-                          ),
-                        ),
-                      ),
-                    ),
-                  ),
-                ),
-                KeyframeTimeline(
-                  keyframes: keyframes,
-                  selectedIndex: selectedKeyframeIndex,
-                  onKeyframeSelected: (index) {
-                    setState(() {
-                      selectedKeyframeIndex = index;
-                      _applyBoardState(keyframes[index].boardState);
-                    });
-                  },
-                  onUpdate: _updateKeyframe,
-                  onDelete: _deleteKeyframe,
-                  onAdd: _addKeyframe,
-                ),
-                ControlPanel(
-                  onAddPlayer: _addPlayer, onAddBall: _addBall, onAddKeyframe: _addKeyframe,
-                  onPlayAnimation: _playAnimation, onResetAll: _resetAll,
-                  onToolSelected: (tool) => setState(() => activeTool = (activeTool == tool) ? Tool.none : tool),
-                  activeTool: activeTool, isAnimating: isAnimating,
-                  onToggleRecording: _toggleRecording, isRecording: isRecording,
-                  onUndo: _undo, canUndo: _history.length > 1,
-                  onRedo: _redo, canRedo: _redoStack.isNotEmpty,
-                  onClearDrawings: _clearDrawings,
-                  onSave: _saveToFile, onLoad: _loadFromFile,
-                  onToggleLayout: _toggleLayout,
-                  onPickPitchImage: _pickPitchImage,
-                ),
-              ],
-            ),
-          ),
-          EditPanel(
-            selectedPlayer: selectedPlayer,
-            onPlayerUpdate: () { setState(() {}); _saveState(); },
-            onPlayerRemove: () { setState(() {
-              players.removeWhere((p) => p.id == selectedPlayer!.id);
-              selectedPlayer = null;
-            }); _saveState(); },
-            onTeamColorUpdate: _updateTeamColor,
-            onTeamSizeUpdate: _updateTeamPlayerSize,
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class TacticsBoardPage extends StatefulWidget {
-  const TacticsBoardPage({super.key});
-  @override
-  State<TacticsBoardPage> createState() => _TacticsBoardPageState();
-}
-
-
-// MARK: - Tactics Board Widget
-class TacticsBoard extends StatelessWidget {
-  final List<Player> players;
-  final Ball? ball;
-  final List<Arrow> arrows;
-  final List<Highlight> highlights;
-  final Offset? dragStart;
-  final Offset? currentDrag;
-  final Tool activeTool;
-  final Player? selectedPlayer;
-  final BoardLayout layout;
-  final Uint8List? customPitchImage;
-  final Function(Player) onPlayerTap;
-  final Function(Player, DragUpdateDetails) onPlayerDragUpdate;
-  final VoidCallback onPlayerDragEnd;
-  final Function(DragUpdateDetails) onBallDragUpdate;
-  final VoidCallback onBallDragEnd;
-
-  const TacticsBoard({
-    super.key,
-    required this.players, this.ball, required this.arrows, required this.highlights,
-    this.dragStart, this.currentDrag, required this.activeTool, this.selectedPlayer,
-    required this.layout, this.customPitchImage,
-    required this.onPlayerTap, required this.onPlayerDragUpdate, required this.onPlayerDragEnd,
-    required this.onBallDragUpdate, required this.onBallDragEnd,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    // Use a FittedBox to ensure the board scales while maintaining aspect ratio.
-    // We define a logical size for the board (e.g., 1920x1080) and all positions are relative to this.
-    // This solves the issue of players not scaling correctly in fullscreen.
-    const double logicalWidth = 1920.0;
-    const double logicalHeight = 1080.0;
-
-    return FittedBox(
-      fit: BoxFit.contain,
-      child: SizedBox(
-        width: logicalWidth,
-        height: logicalHeight,
-        child: ClipRRect(
-          borderRadius: BorderRadius.circular(8),
-          child: Stack(
-            fit: StackFit.expand,
-            children: [
-              customPitchImage != null
-                  ? Image.memory(customPitchImage!, fit: BoxFit.cover)
-                  : Image.asset(
-                      layout == BoardLayout.full ? 'assets/football_field.jpg' : 'assets/football_half_field.jpg',
-                      fit: BoxFit.cover,
-                    ),
-              CustomPaint(
-                painter: BoardPainter(
-                  arrows: arrows, highlights: highlights, dragStart: dragStart,
-                  currentDrag: currentDrag, activeTool: activeTool,
-                ),
-                size: Size.infinite,
-              ),
-              ...players.map((player) => Positioned(
-                left: player.position.dx - player.radius,
-                top: player.position.dy - player.radius,
-                child: GestureDetector(
-                  onTap: () => onPlayerTap(player),
-                  onPanUpdate: (details) => onPlayerDragUpdate(player, details),
-                  onPanEnd: (_) => onPlayerDragEnd(),
-                  child: PlayerWidget(player: player, isSelected: selectedPlayer?.id == player.id),
-                ),
-              )),
-              if (ball != null)
-                Positioned(
-                  left: ball!.position.dx - ball!.radius,
-                  top: ball!.position.dy - ball!.radius,
-                  child: GestureDetector(
-                    onPanUpdate: onBallDragUpdate,
-                    onPanEnd: (_) => onBallDragEnd(),
-                    child: BallWidget(ball: ball!),
-                  ),
-                ),
-            ],
-          ),
+            TimelinePanel(c: c, onAddKeyframe: _addKeyframe, onUpdateKeyframe: _updateKeyframeAt),
+          ],
         ),
       ),
     );
   }
 }
 
-// MARK: - Custom Painter
-class BoardPainter extends CustomPainter {
-  final List<Arrow> arrows;
-  final List<Highlight> highlights;
-  final Offset? dragStart;
-  final Offset? currentDrag;
-  final Tool activeTool;
-
-  BoardPainter({
-    required this.arrows,
-    required this.highlights,
-    this.dragStart,
-    this.currentDrag,
-    required this.activeTool,
-  });
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    final arrowPaint = Paint()..color = Colors.white..strokeWidth = 3..style = PaintingStyle.stroke;
-    final highlightPaint = Paint()..color = const Color(0x4DFFFF00);
-
-    for (var arrow in arrows) {
-      if (arrow.isCurved && arrow.controlPoint != null) {
-        _drawCurvedArrow(canvas, arrow.start, arrow.end, arrow.controlPoint!, arrowPaint);
-      } else {
-        _drawArrow(canvas, arrow.start, arrow.end, arrowPaint);
-      }
-    }
-
-    for (var highlight in highlights) {
-      if (highlight.isOval) {
-        canvas.drawOval(highlight.rect, highlightPaint);
-      } else {
-        canvas.drawRect(highlight.rect, highlightPaint);
-      }
-    }
-
-    if (dragStart != null && currentDrag != null) {
-      if (activeTool == Tool.arrow) {
-        arrowPaint.color = Colors.white;
-        _drawArrow(canvas, dragStart!, currentDrag!, arrowPaint);
-      } else if (activeTool == Tool.curvedArrowLeft || activeTool == Tool.curvedArrowRight) {
-        arrowPaint.color = Colors.white;
-        // Preview curved arrow
-        final midpoint = Offset(
-          (dragStart!.dx + currentDrag!.dx) / 2,
-          (dragStart!.dy + currentDrag!.dy) / 2,
-        );
-        final dx = currentDrag!.dx - dragStart!.dx;
-        final dy = currentDrag!.dy - dragStart!.dy;
-        final length = math.sqrt(dx * dx + dy * dy);
-        final curvature = length * 0.3;
-        
-        // Direction matches the selected tool
-        final direction = activeTool == Tool.curvedArrowLeft ? -1.0 : 1.0;
-        
-        final controlPoint = Offset(
-          midpoint.dx - dy / length * curvature * direction,
-          midpoint.dy + dx / length * curvature * direction,
-        );
-        
-        _drawCurvedArrow(canvas, dragStart!, currentDrag!, controlPoint, arrowPaint);
-      } else if (activeTool == Tool.highlightRect) {
-        highlightPaint.color = const Color(0x80FFFF00);
-        canvas.drawRect(Rect.fromPoints(dragStart!, currentDrag!), highlightPaint);
-      } else if (activeTool == Tool.highlightOval) {
-        highlightPaint.color = const Color(0x80FFFF00);
-        canvas.drawOval(Rect.fromPoints(dragStart!, currentDrag!), highlightPaint);
-      }
-    }
-  }
-
-  void _drawArrow(Canvas canvas, Offset start, Offset end, Paint paint) {
-    canvas.drawLine(start, end, paint);
-    final delta = end - start;
-    if (delta.distance < 5) return;
-    _drawArrowHead(canvas, end, delta.direction, paint);
-  }
-
-  void _drawCurvedArrow(Canvas canvas, Offset start, Offset end, Offset controlPoint, Paint paint) {
-    final path = Path();
-    path.moveTo(start.dx, start.dy);
-    path.quadraticBezierTo(controlPoint.dx, controlPoint.dy, end.dx, end.dy);
-    canvas.drawPath(path, paint);
-    
-    // Draw arrowhead at the end
-    // Calculate the tangent at the end point
-    const t = 0.95; // Sample point near the end to get direction
-    final nearEnd = Offset(
-      (1 - t) * (1 - t) * start.dx + 2 * (1 - t) * t * controlPoint.dx + t * t * end.dx,
-      (1 - t) * (1 - t) * start.dy + 2 * (1 - t) * t * controlPoint.dy + t * t * end.dy,
-    );
-    
-    final delta = end - nearEnd;
-    if (delta.distance < 1) return;
-    _drawArrowHead(canvas, end, delta.direction, paint);
-  }
-
-  void _drawArrowHead(Canvas canvas, Offset tip, double angle, Paint paint) {
-    const arrowSize = 15.0;
-    const arrowAngle = math.pi / 6;
-    final arrowPath = Path();
-    arrowPath.moveTo(tip.dx - arrowSize * math.cos(angle - arrowAngle), tip.dy - arrowSize * math.sin(angle - arrowAngle));
-    arrowPath.lineTo(tip.dx, tip.dy);
-    arrowPath.lineTo(tip.dx - arrowSize * math.cos(angle + arrowAngle), tip.dy - arrowSize * math.sin(angle + arrowAngle));
-    canvas.drawPath(arrowPath, paint..style = PaintingStyle.stroke);
-  }
-
-  @override
-  bool shouldRepaint(covariant CustomPainter oldDelegate) => true;
-}
-
-// MARK: - Player and Ball Widgets
-class PlayerWidget extends StatelessWidget {
-  final Player player;
-  final bool isSelected;
-  const PlayerWidget({super.key, required this.player, required this.isSelected});
-
+/// Shown over the stage while a scrubbed/played frame is being previewed, so
+/// the (non-editable) board state is never a mystery. Click to return to edit.
+class _PreviewChip extends StatelessWidget {
+  final TacticsController c;
+  const _PreviewChip({required this.c});
   @override
   Widget build(BuildContext context) {
-    return Stack(
-      clipBehavior: Clip.none,
-      alignment: Alignment.center,
-      children: [
-        // Layer 1: The colored circle with its own shadow
-        Container(
-          width: player.radius * 2,
-          height: player.radius * 2,
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        borderRadius: BorderRadius.circular(20),
+        onTap: c.stopAndReturnToEdit,
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
           decoration: BoxDecoration(
-            shape: BoxShape.circle,
-            border: Border.all(
-              color: isSelected ? Colors.yellow : Colors.black,
-              width: isSelected ? 3 : 1.5,
-            ),
-            boxShadow: [
-              BoxShadow(
-                color: Colors.black.withValues(alpha: 0.4),
-                blurRadius: 8,
-                offset: const Offset(0, 4),
-              ),
+            color: AppColors.panel.withValues(alpha: 0.92),
+            borderRadius: BorderRadius.circular(20),
+            border: Border.all(color: AppColors.accent.withValues(alpha: 0.5)),
+            boxShadow: const [BoxShadow(color: Color(0x55000000), blurRadius: 12, offset: Offset(0, 4))],
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(c.isPlaying ? Icons.play_arrow : Icons.visibility_outlined, size: 16, color: AppColors.accent),
+              const SizedBox(width: 8),
+              Text(c.isPlaying ? 'Playing…' : 'Preview — click pitch to edit',
+                  style: const TextStyle(color: AppColors.tx, fontSize: 12.5, fontWeight: FontWeight.w600)),
             ],
           ),
-          child: ClipOval(
-            child: Stack(
-              alignment: Alignment.center,
+        ),
+      ),
+    );
+  }
+}
+
+/// Small floating zoom readout + reset, shown only while zoomed in.
+class _ZoomChip extends StatelessWidget {
+  final double zoom;
+  final VoidCallback onReset;
+  const _ZoomChip({required this.zoom, required this.onReset});
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: Colors.transparent,
+      child: Tooltip(
+        message: 'Scroll to pan · ⌘0 to reset',
+        child: InkWell(
+          borderRadius: BorderRadius.circular(20),
+          onTap: onReset,
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
+            decoration: BoxDecoration(
+              color: AppColors.panel.withValues(alpha: 0.92),
+              borderRadius: BorderRadius.circular(20),
+              border: Border.all(color: AppColors.line),
+            ),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
               children: [
-                Container(color: player.color),
-                if (player.color2 != null)
-                  ClipPath(
-                    clipper: HalfCircleClipper(),
-                    child: Container(color: player.color2),
-                  ),
-                if (player.imageData == null)
-                  Text(player.name, style: TextStyle(color: player.textColor, fontWeight: FontWeight.bold, fontSize: player.radius * 0.8)),
+                const Icon(Icons.zoom_in_rounded, size: 15, color: AppColors.tx2),
+                const SizedBox(width: 6),
+                Text('${(zoom * 100).round()}%',
+                    style: const TextStyle(color: AppColors.tx, fontSize: 12, fontWeight: FontWeight.w600)),
+                const SizedBox(width: 6),
+                const Icon(Icons.close_rounded, size: 13, color: AppColors.tx3),
               ],
             ),
           ),
         ),
+      ),
+    );
+  }
+}
 
-        // Layer 2: The player image, now with a soft edge
-        if (player.imageData != null)
-          Positioned(
-            top: -player.radius * 0.3,
-            child: SizedBox(
-              width: player.radius * 3,
-              height: player.radius * 3,
-              child: ShaderMask( // FIX: Wrap the image in a ShaderMask for the fade effect
-                shaderCallback: (rect) {
-                  // This gradient goes from fully visible (white) to fully transparent.
-                  return LinearGradient(
-                    begin: Alignment.topCenter,
-                    end: Alignment.bottomCenter,
-                    // The stops control where the fade happens.
-                    // It's fully visible for the top 38% and fades out over the next 10%.
-                    stops: const [0.0, 0.38, 0.65],
-                    colors: [Colors.white, Colors.white, Colors.white.withValues(alpha: 0.0)],
-                  ).createShader(rect);
-                },
-                blendMode: BlendMode.dstIn, // This applies the gradient's transparency to the image
-                child: ClipPath( // We still clip the shape, but now it has a soft edge from the mask
-                  clipper: PlayerImageClipper(playerRadius: player.radius),
-                  child: Stack(
-                    alignment: Alignment.center,
-                    children: [
-                      // The "shadow" layer
-                      Transform.translate(
-                        offset: const Offset(2, 4),
-                        child: ImageFiltered(
-                          imageFilter: ui.ImageFilter.blur(sigmaX: 3.0, sigmaY: 3.0),
-                          child: Image.memory(
-                            player.imageData!,
-                            color: Colors.black.withValues(alpha: 0.6),
-                            colorBlendMode: BlendMode.srcIn,
-                            fit: BoxFit.contain,
-                          ),
-                        ),
-                      ),
-                      // The actual image
-                      Image.memory(
-                        player.imageData!,
-                        fit: BoxFit.contain,
-                      ),
-                    ],
-                  ),
-                ),
+class _EmptyHint extends StatelessWidget {
+  const _EmptyHint();
+  @override
+  Widget build(BuildContext context) {
+    return IgnorePointer(
+      child: Align(
+        alignment: Alignment.topCenter,
+        child: Container(
+          margin: const EdgeInsets.only(top: 20),
+          padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 12),
+          decoration: BoxDecoration(
+            color: AppColors.panel.withValues(alpha: 0.9),
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: AppColors.line),
+          ),
+          child: const Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(Icons.touch_app_outlined, size: 18, color: AppColors.accent),
+              SizedBox(width: 10),
+              Flexible(
+                child: Text('Add players from the left rail, or apply a formation in Team Setup →',
+                    softWrap: true, style: TextStyle(color: AppColors.tx2, fontSize: 13)),
               ),
-            ),
+            ],
           ),
-      ],
-    );
-  }
-}
-
-class PlayerImageClipper extends CustomClipper<Path> {
-  final double playerRadius;
-
-  PlayerImageClipper({required this.playerRadius});
-
-  @override
-  Path getClip(Size size) {
-    final circleCenter = Offset(size.width / 2, playerRadius * 1.8);
-    final circlePath = Path()
-      ..addOval(Rect.fromCenter(
-        center: circleCenter,
-        width: playerRadius * 2,
-        height: playerRadius * 2,
-      ));
-    final rectPath = Path()
-      ..addRect(Rect.fromLTWH(0, 0, size.width, circleCenter.dy));
-    return Path.combine(PathOperation.union, circlePath, rectPath);
-  }
-
-  @override
-  bool shouldReclip(covariant CustomClipper<Path> oldClipper) => true;
-}
-
-class HalfCircleClipper extends CustomClipper<Path> {
-  @override
-  Path getClip(Size size) {
-    final path = Path();
-    path.addRect(Rect.fromLTWH(0, 0, size.width / 2, size.height));
-    return path;
-  }
-  @override
-  bool shouldReclip(CustomClipper<Path> oldClipper) => false;
-}
-
-
-class BallWidget extends StatelessWidget {
-  final Ball ball;
-  const BallWidget({super.key, required this.ball});
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      width: ball.radius * 2,
-      height: ball.radius * 2,
-      decoration: BoxDecoration(
-        shape: BoxShape.circle,
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withValues(alpha: 0.5),
-            blurRadius: 6,
-            offset: const Offset(2, 4),
-          ),
-        ],
-      ),
-      child: ClipOval(
-        child: Image.asset(
-          'assets/ball.png',
-          fit: BoxFit.cover,
-          errorBuilder: (context, error, stackTrace) {
-            return CustomPaint(
-              painter: SoccerBallPainter(ball: ball),
-            );
-          },
         ),
       ),
     );
   }
 }
 
-class SoccerBallPainter extends CustomPainter {
-  final Ball ball;
-
-  SoccerBallPainter({required this.ball});
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    final radius = size.width / 2;
-    final center = Offset(radius, radius);
-
-    // Create circular clip path
-    final clipPath = Path()..addOval(Rect.fromCircle(center: center, radius: radius));
-    canvas.clipPath(clipPath);
-
-    // Draw checkerboard pattern
-    final paint = Paint();
-    final squareSize = size.width / 3; // Adjust for desired pattern density
-
-    for (int i = -1; i <= size.width / squareSize; i++) {
-      for (int j = -1; j <= size.height / squareSize; j++) {
-        paint.color = (i + j) % 2 == 0 ? Colors.black : Colors.white;
-        canvas.drawRect(
-            Rect.fromLTWH(i * squareSize, j * squareSize, squareSize, squareSize),
-            paint
-        );
-      }
-    }
-
-    // Draw border
-    final borderPaint = Paint()
-      ..color = Colors.black
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 1.0;
-    canvas.drawCircle(center, radius - 0.5, borderPaint);
-  }
-
-  @override
-  bool shouldRepaint(covariant SoccerBallPainter oldDelegate) =>
-      ball.radius != oldDelegate.ball.radius || ball.color != oldDelegate.ball.color;
+// ===========================================================================
+// Export dialogs
+// ===========================================================================
+class _ExportSettings {
+  final int width;
+  final int fps;
+  final double quality; // bits-per-pixel-per-frame factor
+  const _ExportSettings(this.width, this.fps, this.quality);
 }
 
-// MARK: - Control Panel
-class ControlPanel extends StatelessWidget {
-  final Function(Team) onAddPlayer;
-  final VoidCallback onAddBall, onAddKeyframe, onPlayAnimation, onResetAll, onToggleRecording;
-  final VoidCallback onUndo, onRedo, onClearDrawings, onSave, onLoad, onToggleLayout, onPickPitchImage;
-  final Function(Tool) onToolSelected;
-  final Tool activeTool;
-  final bool isAnimating, isRecording, canUndo, canRedo;
-
-  const ControlPanel({
-    super.key,
-    required this.onAddPlayer, required this.onAddBall, required this.onAddKeyframe,
-    required this.onPlayAnimation, required this.onResetAll, required this.onToolSelected,
-    required this.activeTool, required this.isAnimating, required this.onToggleRecording, required this.isRecording,
-    required this.onUndo, required this.canUndo, required this.onRedo, required this.canRedo,
-    required this.onClearDrawings, required this.onSave, required this.onLoad, required this.onToggleLayout,
-    required this.onPickPitchImage,
-  });
-
+class _ExportDialog extends StatefulWidget {
+  const _ExportDialog();
   @override
-  Widget build(BuildContext context) {
-    const spacer = SizedBox(width: 8);
-    const divider = SizedBox(height: 32, child: VerticalDivider(width: 1, color: Colors.white24));
-
-    return Container(
-      padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 52),
-      color: Theme.of(context).cardColor,
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-        children: [
-          Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              _buildIconButton(context, tip: 'Save Project', icon: Icons.save, onPressed: onSave),
-              spacer,
-              _buildIconButton(context, tip: 'Load Project', icon: Icons.folder_open, onPressed: onLoad),
-            ],
-          ),
-          divider,
-          Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              _buildIconButton(context, tip: 'Undo', icon: Icons.undo, onPressed: canUndo ? onUndo : null),
-              spacer,
-              _buildIconButton(context, tip: 'Redo', icon: Icons.redo, onPressed: canRedo ? onRedo : null),
-            ],
-          ),
-          divider,
-          Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              _buildIconButton(context, tip: 'Add Home Player', icon: Icons.person_add, color: Colors.red, onPressed: () => onAddPlayer(Team.home)),
-              spacer,
-              _buildIconButton(context, tip: 'Add Away Player', icon: Icons.person_add, color: Colors.blue, onPressed: () => onAddPlayer(Team.away)),
-              spacer,
-              _buildIconButton(context, tip: 'Add Ball', icon: Icons.sports_soccer, color: Colors.yellow, onPressed: onAddBall),
-            ],
-          ),
-          divider,
-          Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              _buildIconButton(context, tip: 'Change Pitch', icon: Icons.image, onPressed: onPickPitchImage),
-              spacer,
-              _buildIconButton(context, tip: 'Play Animation', icon: Icons.play_arrow, onPressed: isAnimating ? null : onPlayAnimation),
-            ],
-          ),
-          divider,
-          Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              _buildIconButton(context, tip: 'Draw Arrow', icon: Icons.arrow_forward, onPressed: () => onToolSelected(Tool.arrow), isActive: activeTool == Tool.arrow),
-              spacer,
-              _buildIconButton(context, tip: 'Curved Arrow (Left)', icon: Icons.turn_left, onPressed: () => onToolSelected(Tool.curvedArrowLeft), isActive: activeTool == Tool.curvedArrowLeft),
-              spacer,
-              _buildIconButton(context, tip: 'Curved Arrow (Right)', icon: Icons.turn_right, onPressed: () => onToolSelected(Tool.curvedArrowRight), isActive: activeTool == Tool.curvedArrowRight),
-              spacer,
-              _buildIconButton(context, tip: 'Highlight Rectangle', icon: Icons.crop_square, onPressed: () => onToolSelected(Tool.highlightRect), isActive: activeTool == Tool.highlightRect),
-              spacer,
-              _buildIconButton(context, tip: 'Highlight Oval', icon: Icons.circle_outlined, onPressed: () => onToolSelected(Tool.highlightOval), isActive: activeTool == Tool.highlightOval),
-            ],
-          ),
-          divider,
-          Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              _buildIconButton(context, tip: 'Switch Layout', icon: Icons.crop_landscape, onPressed: onToggleLayout),
-              spacer,
-              _buildIconButton(context, tip: isRecording ? 'Exit Fullscreen' : 'Fullscreen Mode', icon: isRecording ? Icons.fullscreen_exit : Icons.fullscreen, color: isRecording ? Colors.red : Colors.cyan, onPressed: onToggleRecording),
-              spacer,
-              _buildIconButton(context, tip: 'Clear Drawings', icon: Icons.layers_clear, onPressed: onClearDrawings),
-              spacer,
-              _buildIconButton(context, tip: 'Reset Board', icon: Icons.refresh, onPressed: onResetAll),
-            ],
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildIconButton(BuildContext context, {required String tip, required IconData icon, required VoidCallback? onPressed, Color? color, bool isActive = false}) {
-    return Tooltip(
-      message: tip,
-      child: IconButton(
-        icon: Icon(icon),
-        color: isActive ? Colors.amber : color ?? Colors.white,
-        onPressed: onPressed,
-        iconSize: 28,
-        splashRadius: 24,
-      ),
-    );
-  }
+  State<_ExportDialog> createState() => _ExportDialogState();
 }
 
-// MARK: - Edit Panel
-class EditPanel extends StatefulWidget {
-  final Player? selectedPlayer;
-  final VoidCallback onPlayerUpdate;
-  final VoidCallback onPlayerRemove;
-  final Function(Team, Color, bool) onTeamColorUpdate;
-  final Function(Team, double) onTeamSizeUpdate;
+class _ExportDialogState extends State<_ExportDialog> {
+  int _width = 1920;
+  int _fps = 30;
+  double _quality = 0.20; // High
 
-  const EditPanel({super.key, this.selectedPlayer, required this.onPlayerUpdate, required this.onPlayerRemove, required this.onTeamColorUpdate, required this.onTeamSizeUpdate});
-  @override
-  State<EditPanel> createState() => _EditPanelState();
-}
-
-class _EditPanelState extends State<EditPanel> {
-  late TextEditingController _nameController;
-  final ImagePicker _picker = ImagePicker();
-
-  double _homePlayerSize = 20.0;
-  double _awayPlayerSize = 20.0;
-
-  @override
-  void initState() {
-    super.initState();
-    _nameController = TextEditingController(text: widget.selectedPlayer?.name);
-  }
-
-  @override
-  void didUpdateWidget(covariant EditPanel oldWidget) {
-    super.didUpdateWidget(oldWidget);
-    if (widget.selectedPlayer?.name != _nameController.text) {
-      _nameController.text = widget.selectedPlayer?.name ?? '';
-    }
-  }
-
-  @override
-  void dispose() {
-    _nameController.dispose();
-    super.dispose();
-  }
-
-  Future<void> _pickImage() async {
-    if (widget.selectedPlayer == null) return;
-    final XFile? image = await _picker.pickImage(source: ImageSource.gallery);
-    if (image != null) {
-      final bytes = await image.readAsBytes();
-      setState(() => widget.selectedPlayer!.imageData = bytes);
-      widget.onPlayerUpdate();
-    }
-  }
-
-  void _pickColor(BuildContext context, {Player? player, Team? team, bool isPrimary = true, bool isTextColor = false}) {
-    Color initialColor = Colors.white;
-    if (isTextColor) {
-      initialColor = player?.textColor ?? Colors.white;
-    } else if (isPrimary) {
-      initialColor = player?.color ?? (team == Team.home ? Colors.red : Colors.blue);
-    } else {
-      initialColor = player?.color2 ?? (team == Team.home ? Colors.white : Colors.white);
-    }
-
-    showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Pick a color'),
-        content: SingleChildScrollView(
-          child: ColorPicker(
-            pickerColor: initialColor,
-            onColorChanged: (color) {
-              setState(() {
-                if (player != null) {
-                  if (isTextColor) {
-                    player.textColor = color;
-                  } else if (isPrimary) {
-                    player.color = color;
-                  } else {
-                    player.color2 = color;
-                  }
-                  widget.onPlayerUpdate();
-                } else if (team != null) {
-                  widget.onTeamColorUpdate(team, color, isPrimary);
-                }
-              });
-            },
-            displayThumbColor: true,
-            enableAlpha: false,
-            pickerAreaHeightPercent: 0.8,
-            colorPickerWidth: 300,
-            hexInputBar: true,
-          ),
-        ),
-        actions: <Widget>[
-          ElevatedButton(child: const Text('Done'), onPressed: () => Navigator.of(context).pop()),
-        ],
-      ),
-    );
+  String _estimate() {
+    final height = (_width * 9 / 16).round();
+    final mbps = (_width * height * _fps * _quality) / 1000000;
+    return '$_width×$height · ~${mbps.toStringAsFixed(0)} Mbps (H.264)';
   }
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      width: 280,
-      color: Theme.of(context).cardColor,
-      padding: const EdgeInsets.all(16.0),
-      child: Column(
+    return AlertDialog(
+      backgroundColor: AppColors.panel2,
+      title: const Text('Export settings'),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          if (widget.selectedPlayer != null) ...[
-            Text('Edit Player', style: Theme.of(context).textTheme.titleLarge),
-            const SizedBox(height: 16),
-            TextField(controller: _nameController, decoration: const InputDecoration(labelText: 'Name/Number'),
-              onChanged: (value) { widget.selectedPlayer!.name = value; widget.onPlayerUpdate(); },
-            ),
-            const SizedBox(height: 16),
-            Text('Player Size: ${widget.selectedPlayer!.radius.toStringAsFixed(0)}'),
-            Slider(
-              value: widget.selectedPlayer!.radius, min: 10, max: 60,
-              onChanged: (value) { setState(() => widget.selectedPlayer!.radius = value); widget.onPlayerUpdate(); },
-            ),
-            const SizedBox(height: 16),
-            _buildColorPickerRow('Primary Color', () => _pickColor(context, player: widget.selectedPlayer!), widget.selectedPlayer!.color),
-            const SizedBox(height: 16),
-            _buildColorPickerRow('Secondary Color', () => _pickColor(context, player: widget.selectedPlayer!, isPrimary: false), widget.selectedPlayer!.color2),
-            const SizedBox(height: 16),
-            _buildColorPickerRow('Text Color', () => _pickColor(context, player: widget.selectedPlayer!, isTextColor: true), widget.selectedPlayer!.textColor),
-            const SizedBox(height: 24),
-            ElevatedButton.icon(icon: const Icon(Icons.image), onPressed: _pickImage, label: const Text('Choose Picture')),
-            if (widget.selectedPlayer!.imageData != null)
-              Padding(padding: const EdgeInsets.only(top: 16.0), child: Image.memory(widget.selectedPlayer!.imageData!, height: 100)),
-            const Spacer(),
-            ElevatedButton.icon(
-              icon: const Icon(Icons.delete_forever),
-              onPressed: widget.onPlayerRemove,
-              style: ElevatedButton.styleFrom(backgroundColor: Colors.red.shade900),
-              label: const Text('Remove Player'),
-            ),
-          ] else ...[
-            Text('Team Settings', style: Theme.of(context).textTheme.titleLarge),
-            const SizedBox(height: 24),
-            Text('Home Player Size: ${_homePlayerSize.toStringAsFixed(0)}'),
-            Slider(
-              value: _homePlayerSize, min: 10, max: 60,
-              onChanged: (value) {
-                setState(() => _homePlayerSize = value);
-                widget.onTeamSizeUpdate(Team.home, value);
-              },
-            ),
-            _buildColorPickerRow('Home Primary', () => _pickColor(context, team: Team.home), Colors.red.shade700),
-            const SizedBox(height: 16),
-            _buildColorPickerRow('Home Secondary', () => _pickColor(context, team: Team.home, isPrimary: false), Colors.white),
-            const Divider(height: 32),
-            Text('Away Player Size: ${_awayPlayerSize.toStringAsFixed(0)}'),
-            Slider(
-              value: _awayPlayerSize, min: 10, max: 60,
-              onChanged: (value) {
-                setState(() => _awayPlayerSize = value);
-                widget.onTeamSizeUpdate(Team.away, value);
-              },
-            ),
-            _buildColorPickerRow('Away Primary', () => _pickColor(context, team: Team.away), Colors.blue.shade700),
-            const SizedBox(height: 16),
-            _buildColorPickerRow('Away Secondary', () => _pickColor(context, team: Team.away, isPrimary: false), Colors.white),
-          ]
+          const Text('Resolution (16:9)', style: TextStyle(color: AppColors.tx2)),
+          const SizedBox(height: 8),
+          SegmentedButton<int>(
+            segments: const [
+              ButtonSegment(value: 1280, label: Text('720p')),
+              ButtonSegment(value: 1920, label: Text('1080p')),
+              ButtonSegment(value: 2560, label: Text('1440p')),
+            ],
+            selected: {_width},
+            onSelectionChanged: (s) => setState(() => _width = s.first),
+          ),
+          const SizedBox(height: 16),
+          const Text('Frame rate', style: TextStyle(color: AppColors.tx2)),
+          const SizedBox(height: 8),
+          SegmentedButton<int>(
+            segments: const [
+              ButtonSegment(value: 24, label: Text('24')),
+              ButtonSegment(value: 30, label: Text('30')),
+              ButtonSegment(value: 60, label: Text('60')),
+            ],
+            selected: {_fps},
+            onSelectionChanged: (s) => setState(() => _fps = s.first),
+          ),
+          const SizedBox(height: 16),
+          const Text('Quality', style: TextStyle(color: AppColors.tx2)),
+          const SizedBox(height: 8),
+          SegmentedButton<double>(
+            segments: const [
+              ButtonSegment(value: 0.10, label: Text('Standard')),
+              ButtonSegment(value: 0.20, label: Text('High')),
+              ButtonSegment(value: 0.36, label: Text('Max')),
+            ],
+            selected: {_quality},
+            showSelectedIcon: false,
+            onSelectionChanged: (s) => setState(() => _quality = s.first),
+          ),
+          const SizedBox(height: 8),
+          Text(_estimate(), style: const TextStyle(color: AppColors.tx3, fontSize: 11.5)),
         ],
       ),
-    );
-  }
-
-  Widget _buildColorPickerRow(String label, VoidCallback onTap, Color? color) {
-    return Row(
-      children: [
-        Text(label),
-        const Spacer(),
-        GestureDetector(
-          onTap: onTap,
-          child: Container(
-            width: 40, height: 40,
-            decoration: BoxDecoration(color: color ?? Colors.transparent, shape: BoxShape.circle, border: Border.all(color: Colors.white54)),
-            child: color == null ? const Icon(Icons.add, size: 20) : null,
-          ),
-        )
+      actions: [
+        TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancel')),
+        FilledButton(
+          style: FilledButton.styleFrom(backgroundColor: AppColors.accent, foregroundColor: const Color(0xFF08130B)),
+          onPressed: () => Navigator.pop(context, _ExportSettings(_width, _fps, _quality)),
+          child: const Text('Export'),
+        ),
       ],
     );
   }
 }
 
-// MARK: - Keyframe Timeline
-class KeyframeTimeline extends StatelessWidget {
-  final List<AnimationKeyframe> keyframes;
-  final int? selectedIndex;
-  final Function(int) onKeyframeSelected;
-  final VoidCallback onUpdate;
-  final VoidCallback onDelete;
-  final VoidCallback onAdd;
-
-  const KeyframeTimeline({
-    super.key,
-    required this.keyframes,
-    this.selectedIndex,
-    required this.onKeyframeSelected,
-    required this.onUpdate,
-    required this.onDelete,
-    required this.onAdd,
-  });
+class _ProgressDialog extends StatelessWidget {
+  final ValueNotifier<double> progress;
+  final VoidCallback onCancel;
+  const _ProgressDialog({required this.progress, required this.onCancel});
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      height: 120,
-      color: Theme.of(context).cardColor,
-      padding: const EdgeInsets.all(8.0),
-      child: Column(
-        children: [
-          if (selectedIndex != null)
-            Padding(
-              padding: const EdgeInsets.only(bottom: 8.0),
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  ElevatedButton.icon(icon: const Icon(Icons.update), label: const Text("Update Keyframe"), onPressed: onUpdate),
-                  const SizedBox(width: 16),
-                  ElevatedButton.icon(icon: const Icon(Icons.delete), label: const Text("Delete Keyframe"), onPressed: onDelete, style: ElevatedButton.styleFrom(backgroundColor: Colors.red.shade900)),
-                ],
-              ),
+    return AlertDialog(
+      backgroundColor: AppColors.panel2,
+      title: const Text('Exporting video…'),
+      content: ValueListenableBuilder<double>(
+        valueListenable: progress,
+        builder: (_, value, __) => Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ClipRRect(
+              borderRadius: BorderRadius.circular(4),
+              child: LinearProgressIndicator(value: value, minHeight: 8, backgroundColor: AppColors.panel, color: AppColors.accent),
             ),
-          Expanded(
-            child: ListView.builder(
-              scrollDirection: Axis.horizontal,
-              itemCount: keyframes.length + 1, // +1 for the Add button
-              itemBuilder: (context, index) {
-                if (index == 0) {
-                  return Padding(
-                    padding: const EdgeInsets.only(right: 8.0),
-                    child: AspectRatio(
-                      aspectRatio: 1,
-                      child: Material(
-                        color: Colors.green.withValues(alpha: 0.2),
-                        borderRadius: BorderRadius.circular(8),
-                        child: InkWell(
-                          onTap: onAdd,
-                          borderRadius: BorderRadius.circular(8),
-                          child: Column(
-                            mainAxisAlignment: MainAxisAlignment.center,
-                            children: const [
-                              Icon(Icons.add_circle, color: Colors.green, size: 32),
-                              SizedBox(height: 4),
-                              Text('Add', style: TextStyle(color: Colors.green, fontWeight: FontWeight.bold)),
-                            ],
-                          ),
-                        ),
-                      ),
-                    ),
-                  );
-                }
-                final keyframeIndex = index - 1;
-                final keyframe = keyframes[keyframeIndex];
-                return GestureDetector(
-                  onTap: () => onKeyframeSelected(keyframeIndex),
-                  child: Container(
-                    width: 120,
-                    margin: const EdgeInsets.symmetric(horizontal: 4.0),
-                    decoration: BoxDecoration(
-                      border: Border.all(
-                        color: selectedIndex == keyframeIndex ? Colors.amber : Colors.grey.shade700,
-                        width: 3,
-                      ),
-                      borderRadius: BorderRadius.circular(4),
-                    ),
-                    child: keyframe.thumbnail != null
-                        ? Image.memory(keyframe.thumbnail!, fit: BoxFit.cover)
-                        : const Center(child: Text('No Preview')),
-                  ),
-                );
-              },
-            ),
-          ),
-        ],
+            const SizedBox(height: 12),
+            Text('${(value * 100).toStringAsFixed(0)}%', style: const TextStyle(color: AppColors.tx2)),
+          ],
+        ),
       ),
+      actions: [TextButton(onPressed: onCancel, child: const Text('Cancel'))],
     );
   }
 }
