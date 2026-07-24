@@ -48,6 +48,10 @@ class BoardRenderer {
 
   /// Render [state] to a [width]x[height] (16:9) image. Decodes assets (async),
   /// then hands off to the synchronous [recordPicture] and rasterizes.
+  ///
+  /// [superSample] (SSAA) renders the frame at [superSample]× the target size
+  /// and downscales it with high-quality filtering, so vector lines, discs and
+  /// text come out crisp and anti-aliased in the exported video. 1 = off.
   static Future<ui.Image> render({
     required BoardState state,
     required BoardOrientation orientation,
@@ -59,6 +63,7 @@ class BoardRenderer {
     double flowPhase = 0.0,
     bool trails = false,
     bool showNames = true,
+    int superSample = 1,
   }) async {
     final ball = state.ball != null ? await _ballImage() : null;
     final photos = <String, ui.Image>{};
@@ -69,12 +74,15 @@ class BoardRenderer {
       }
     }
 
+    final ss = superSample.clamp(1, 4);
+    final rw = width * ss, rh = height * ss;
+
     final picture = recordPicture(
       state: state,
       orientation: orientation,
       layout: layout,
       showNumbers: showNumbers,
-      width: width,
+      width: rw,
       ball: ball,
       photos: photos,
       reveal: reveal,
@@ -82,10 +90,28 @@ class BoardRenderer {
       trails: trails,
       showNames: showNames,
     );
+    final big = await picture.toImage(rw, rh);
+    picture.dispose();
+    if (ss == 1) return big;
+
+    // Downscale the supersampled frame to the output size with high-quality
+    // filtering for clean anti-aliasing.
+    final recorder = ui.PictureRecorder();
+    final canvas = Canvas(recorder);
+    canvas.drawImageRect(
+      big,
+      Rect.fromLTWH(0, 0, rw.toDouble(), rh.toDouble()),
+      Rect.fromLTWH(0, 0, width.toDouble(), height.toDouble()),
+      Paint()
+        ..isAntiAlias = true
+        ..filterQuality = FilterQuality.high,
+    );
+    final down = recorder.endRecording();
     try {
-      return await picture.toImage(width, height);
+      return await down.toImage(width, height);
     } finally {
-      picture.dispose();
+      down.dispose();
+      big.dispose();
     }
   }
 

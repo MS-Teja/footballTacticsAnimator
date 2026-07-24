@@ -346,14 +346,25 @@ class Highlight {
   bool isOval;
   Color color;
 
-  Highlight({required this.rect, this.isOval = false, this.color = const Color(0x66FFEB3B), String? id})
+  /// Transient keyframe-crossfade amount (0..1): 1 = fully shown, <1 while the
+  /// zone grows/fades in (added) or out (removed) across a segment. Mirrors the
+  /// arrows' draw-in. NOT serialized — always 1.0 at rest.
+  double reveal;
+
+  Highlight(
+      {required this.rect,
+      this.isOval = false,
+      this.color = const Color(0x66FFEB3B),
+      this.reveal = 1.0,
+      String? id})
       : id = id ?? UniqueKey().toString();
 
   Highlight.clone(Highlight o)
       : id = o.id,
         rect = o.rect,
         isOval = o.isOval,
-        color = o.color;
+        color = o.color,
+        reveal = o.reveal;
 
   Map<String, dynamic> toJson() => {
         'id': id,

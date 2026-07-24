@@ -24,10 +24,12 @@ and **exporting them as real MP4 video** — built for coaches, analysts and con
 - Draggable ball (flat image).
 
 ### Drawing tools
-- **Animated movement arrows** — straight and curved (either direction) — plus **oval zones**.
+- **Animated movement arrows** — straight and curved (either direction) — plus **oval / rectangle zones**.
 - Each arrow animates during playback: pick **Draw along** or **Fade in**, and recolor or delete it.
 - Arrows trace out on their own quick clock so the head **leads the run to its destination**
   ahead of the player, then keeps flowing — not glued to the mover.
+- **Zones animate between keyframes too:** a zone added in the next frame **grows and fades in**,
+  and one you remove **fades out** as the play moves on — it never lingers on later frames.
 
 ### Animation
 - **Keyframe timeline** with thumbnails, reorderable, per-keyframe **transition duration**,
@@ -44,8 +46,10 @@ and **exporting them as real MP4 video** — built for coaches, analysts and con
 
 ### Video export (macOS)
 - **Native H.264 `.mp4` export** via AVFoundation (Rec.709 color) — no external tools, no screen recording.
-- Choose **720p / 1080p / 1440p**, **24 / 30 / 60 fps**, and **Standard / High / Max** quality.
-- Frames are rendered from a pure canvas at full resolution, so output is crisp regardless of window size.
+- Choose **720p / 1080p / 1440p / 4K**, **24 / 30 / 60 fps**, and **Standard / High / Max** quality.
+- **Supersampled (2×) rendering** at sub-4K resolutions — each frame is drawn large and downscaled,
+  so lines, discs, numbers and nameplates come out crisp and cleanly anti-aliased.
+- Frames are rendered from a pure canvas at full resolution, so output is sharp regardless of window size.
 - "Reveal in Finder" when done.
 
 ### Project & workflow

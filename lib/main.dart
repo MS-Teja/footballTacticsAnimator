@@ -86,7 +86,7 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
 
   // ---- Frame capture (pure canvas — no widget tree) -----------------------
   Future<ui.Image> _renderImage(BoardState state, int width, int height,
-      {double reveal = 1.0, double flowPhase = 0.0}) {
+      {double reveal = 1.0, double flowPhase = 0.0, int superSample = 1}) {
     return BoardRenderer.render(
       state: state,
       orientation: c.orientation,
@@ -98,6 +98,7 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
       flowPhase: flowPhase,
       trails: c.showTrails,
       showNames: c.showNames,
+      superSample: superSample,
     );
   }
 
@@ -165,6 +166,9 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
     final fps = settings.fps;
     final bitrate = (width * height * fps * settings.quality).round().clamp(2000000, 80000000);
     final frameCount = (c.totalDuration * fps).round().clamp(2, 36000);
+    // Supersample smaller resolutions for crisp lines/text; 4K is already dense
+    // enough (and heavy) that native-resolution rendering is sharp on its own.
+    final superSample = width <= 2560 ? 2 : 1;
 
     final progress = ValueNotifier<double>(0);
     var cancelled = false;
@@ -187,7 +191,7 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
         final sample = c.sampleAt(t);
         final flowPhase = (t * c.totalDuration) / kArrowFlowPeriod; // matches the board's flow period
         final image = await _renderImage(sample.state, width, height,
-            reveal: sample.progress, flowPhase: flowPhase);
+            reveal: sample.progress, flowPhase: flowPhase, superSample: superSample);
         final data = await image.toByteData(format: ui.ImageByteFormat.rawRgba);
         image.dispose();
         if (data != null) await exporter.addFrame(data.buffer.asUint8List());
@@ -276,7 +280,14 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
       ));
   }
 
-  bool get _isEditingText => FocusManager.instance.primaryFocus?.context?.widget is EditableText;
+  bool get _isEditingText {
+    final ctx = FocusManager.instance.primaryFocus?.context;
+    if (ctx == null) return false;
+    // The focused node lives *inside* EditableText's subtree — its widget is the
+    // internal Focus, not EditableText itself — so an identity check on the
+    // focused widget misses it. Walk up to find the enclosing EditableText.
+    return ctx.widget is EditableText || ctx.findAncestorWidgetOfExactType<EditableText>() != null;
+  }
 
   KeyEventResult _onKey(FocusNode node, KeyEvent event) {
     if (event is! KeyDownEvent) return KeyEventResult.ignored;
@@ -284,15 +295,18 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
     // Windows/Linux.
     final meta = HardwareKeyboard.instance.isMetaPressed || HardwareKeyboard.instance.isControlPressed;
     final shift = HardwareKeyboard.instance.isShiftPressed;
-    if (meta && event.logicalKey == LogicalKeyboardKey.keyZ) {
-      shift ? c.redo() : c.undo();
-      return KeyEventResult.handled;
-    }
     if (meta && event.logicalKey == LogicalKeyboardKey.keyS) {
       _save();
       return KeyEventResult.handled;
     }
+    // While a text field is focused, let it own every key (backspace/delete,
+    // space, arrows, ⌘Z text-undo) instead of the board shortcuts deleting the
+    // selected player or wiping the board.
     if (_isEditingText) return KeyEventResult.ignored;
+    if (meta && event.logicalKey == LogicalKeyboardKey.keyZ) {
+      shift ? c.redo() : c.undo();
+      return KeyEventResult.handled;
+    }
     final key = event.logicalKey;
     if (meta) {
       if (key == LogicalKeyboardKey.keyD) {
@@ -568,6 +582,7 @@ class _ExportDialogState extends State<_ExportDialog> {
               ButtonSegment(value: 1280, label: Text('720p')),
               ButtonSegment(value: 1920, label: Text('1080p')),
               ButtonSegment(value: 2560, label: Text('1440p')),
+              ButtonSegment(value: 3840, label: Text('4K')),
             ],
             selected: {_width},
             onSelectionChanged: (s) => setState(() => _width = s.first),

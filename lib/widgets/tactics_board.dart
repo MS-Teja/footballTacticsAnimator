@@ -391,10 +391,18 @@ class DrawingsPainter extends CustomPainter {
   }
 
   void _highlight(Canvas canvas, Highlight h, bool selected) {
-    final r = Rect.fromPoints(geo.toScreen(h.rect.topLeft), geo.toScreen(h.rect.bottomRight));
-    final fill = Paint()..color = h.color;
+    final rv = h.reveal.clamp(0.0, 1.0);
+    if (rv <= 0.002) return;
+    var r = Rect.fromPoints(geo.toScreen(h.rect.topLeft), geo.toScreen(h.rect.bottomRight));
+    // Grow in/out from the centre while appearing/disappearing (like the arrow
+    // draw-in), and fade the fill + border alpha with the same amount.
+    if (rv < 1.0) {
+      final scale = 0.7 + 0.3 * rv;
+      r = Rect.fromCenter(center: r.center, width: r.width * scale, height: r.height * scale);
+    }
+    final fill = Paint()..color = h.color.withValues(alpha: h.color.a * rv);
     final border = Paint()
-      ..color = selected ? Colors.amber : h.color.withValues(alpha: 0.9)
+      ..color = selected ? Colors.amber.withValues(alpha: rv) : h.color.withValues(alpha: 0.9 * rv)
       ..style = PaintingStyle.stroke
       ..strokeWidth = selected ? 3 : math.max(1.5, geo.metres(0.18));
     if (h.isOval) {

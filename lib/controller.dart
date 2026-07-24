@@ -851,11 +851,28 @@ class TacticsController extends ChangeNotifier {
     // Drawings come from the DESTINATION keyframe so an arrow drawn while
     // building a frame animates during the move that arrives at it (this is the
     // natural workflow, and it lets arrows on the final frame animate + export).
+    //
+    // Zones (highlights) are id-matched across the segment so they animate like
+    // the arrows' draw-in: present in both keyframes -> shown full; new in the
+    // destination -> grows/fades in; removed in the destination -> grows/fades
+    // out (instead of persisting or blinking away).
+    final startHl = {for (final h in a.highlights) h.id};
+    final highlights = <Highlight>[];
+    for (final eh in b.highlights) {
+      highlights.add(Highlight.clone(eh)..reveal = startHl.contains(eh.id) ? 1.0 : u.clamp(0.0, 1.0));
+    }
+    final endIds = {for (final h in b.highlights) h.id};
+    for (final sh in a.highlights) {
+      if (!endIds.contains(sh.id)) {
+        highlights.add(Highlight.clone(sh)..reveal = (1 - u).clamp(0.0, 1.0));
+      }
+    }
+
     return BoardState(
       players: players,
       ball: ball,
       arrows: b.arrows.map(Arrow.clone).toList(),
-      highlights: b.highlights.map(Highlight.clone).toList(),
+      highlights: highlights,
     );
   }
 
